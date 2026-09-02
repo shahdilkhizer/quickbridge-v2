@@ -78,25 +78,42 @@ public with sharing class QuickbridgeAdminSecurity {
     Datetime nowValue = System.now();
     List<Quickbridge_Admin_Rate_Limit__c> rows = [
       SELECT Id, Attempt_Count__c, Expires_At__c FROM Quickbridge_Admin_Rate_Limit__c
+      WHERE Bucket_Hash__c = :key LIMIT 1
+    ];
+    if (rows.isEmpty()) return;
+    Quickbridge_Admin_Rate_Limit__c row = rows[0];
+    if (row.Expires_At__c > nowValue && row.Attempt_Count__c >= MAX_ATTEMPTS) {
+      handled('Too many attempts. Please wait 15 minutes before trying again.');
+    }
+  }
+
+  public static void recordFailedAttempt(String username, String bucket) {
+    if (bypassRateLimitForTests || String.isBlank(username)) return;
+    String key = bucketHash(username, bucket);
+    Datetime nowValue = System.now();
+    List<Quickbridge_Admin_Rate_Limit__c> rows = [
+      SELECT Id, Attempt_Count__c, Expires_At__c FROM Quickbridge_Admin_Rate_Limit__c
       WHERE Bucket_Hash__c = :key LIMIT 1 FOR UPDATE
     ];
     Quickbridge_Admin_Rate_Limit__c row;
     if (rows.isEmpty()) {
-      row = new Quickbridge_Admin_Rate_Limit__c(Bucket_Hash__c = key, Attempt_Count__c = 1, Expires_At__c = nowValue.addMinutes(WINDOW_MINUTES));
-      Database.SaveResult inserted = Database.insert(row, false);
-      if (!inserted.isSuccess()) handled('Login protection is temporarily unavailable. Please try again later.');
+      row = new Quickbridge_Admin_Rate_Limit__c(
+        Bucket_Hash__c = key,
+        Attempt_Count__c = 1,
+        Expires_At__c = nowValue.addMinutes(WINDOW_MINUTES)
+      );
+      Database.insert(row, false);
       return;
     }
     row = rows[0];
     if (row.Expires_At__c <= nowValue) {
       row.Attempt_Count__c = 1;
       row.Expires_At__c = nowValue.addMinutes(WINDOW_MINUTES);
-    } else if (row.Attempt_Count__c >= MAX_ATTEMPTS) {
-      handled('Too many attempts. Please wait 15 minutes before trying again.');
     } else {
-      row.Attempt_Count__c++;
+      Decimal attempts = row.Attempt_Count__c == null ? 0 : row.Attempt_Count__c;
+      row.Attempt_Count__c = attempts + 1;
     }
-    if (!Database.update(row, false).isSuccess()) handled('Login protection is temporarily unavailable. Please try again later.');
+    Database.update(row, false);
   }
 
   public static void clearRateLimit(String username, String bucket) {
@@ -110,9 +127,12 @@ public with sharing class QuickbridgeAdminSecurity {
     try {
       String safeDetails = IntegrationErrorLogService.sanitizeForUser(details);
       Database.insert(new Quickbridge_Admin_Audit__c(
-        Action__c = String.valueOf(action).left(80), Connector_Key__c = String.valueOf(connectorKey).left(80),
-        Status__c = String.valueOf(status).left(40), Details__c = String.isBlank(safeDetails) ? null : safeDetails.left(32768),
-        Actor_User__c = UserInfo.getUserId(), Related_Record_Id__c = relatedRecordId == null ? null : String.valueOf(relatedRecordId)
+        Action__c = String.isBlank(action) ? null : action.left(80),
+        Connector_Key__c = String.isBlank(connectorKey) ? null : connectorKey.left(80),
+        Status__c = String.isBlank(status) ? null : status.left(40),
+        Details__c = String.isBlank(safeDetails) ? null : safeDetails.left(32768),
+        Actor_User__c = UserInfo.getUserId(),
+        Related_Record_Id__c = relatedRecordId == null ? null : String.valueOf(relatedRecordId)
       ), false);
     } catch (Exception ignored) {
       System.debug(LoggingLevel.WARN, 'Quickbridge administrator audit could not be persisted.');

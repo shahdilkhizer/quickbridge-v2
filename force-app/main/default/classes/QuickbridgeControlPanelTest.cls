@@ -18,6 +18,11 @@ private class QuickbridgeControlPanelTest {
       Named_Credential__c = 'QuickBooks_NC', External_Credential__c = 'QuickBooks_EC', Active__c = false,
       Entitlement_Status__c = 'Available', Health_Status__c = 'Unknown'
     );
+    insert new List<Connector_Config_Value__c>{
+      new Connector_Config_Value__c(Name = 'Server companyName', Connector_Key__c = 'server', Field_Key__c = 'companyName', Value__c = 'The Lodestone Group', Is_Secret_Reference__c = false),
+      new Connector_Config_Value__c(Name = 'Server username', Connector_Key__c = 'server', Field_Key__c = 'username', Value__c = 'serveradmin@example.com', Is_Secret_Reference__c = false),
+      new Connector_Config_Value__c(Name = 'Server password', Connector_Key__c = 'server', Field_Key__c = 'password', Value__c = 'ServerSecret123', Is_Secret_Reference__c = false)
+    };
   }
 
   private static String createAdminSession() {
@@ -94,7 +99,7 @@ private class QuickbridgeControlPanelTest {
     QuickbridgeAdminSecurity.bypassPermissionsForTests = true;
     QuickbridgeAdminSecurity.bypassRateLimitForTests = false;
     for (Integer attempt = 0; attempt < 5; attempt++) {
-      QuickbridgeAdminSecurity.checkRateLimit('RATE-LIMIT@example.com', QuickbridgeAdminSecurity.LOGIN_BUCKET);
+      QuickbridgeAdminSecurity.recordFailedAttempt('RATE-LIMIT@example.com', QuickbridgeAdminSecurity.LOGIN_BUCKET);
     }
     try {
       QuickbridgeAdminSecurity.checkRateLimit('rate-limit@example.com', QuickbridgeAdminSecurity.LOGIN_BUCKET);
@@ -294,5 +299,44 @@ private class QuickbridgeControlPanelTest {
     System.assertNotEquals(null, cleared.status);
     System.assertEquals('Succeeded', QuickbridgeMappingFacade.getDeploymentStatus(sessionToken, null).status);
     System.assert([SELECT COUNT() FROM Quickbridge_Admin_Audit__c WHERE Action__c IN ('MAPPING_SAVE','MAPPING_RESET')] >= 2);
+  }
+
+  @IsTest
+  static void missingServerConfigFailsAuthenticationAndLicenseRefresh() {
+    delete [SELECT Id FROM Connector_Config_Value__c WHERE Connector_Key__c = 'server'];
+    QuickbridgeAdminSecurity.bypassPermissionsForTests = true;
+    QuickbridgeAdminSecurity.bypassRateLimitForTests = true;
+
+    QuickbridgeControlPanelController.AuthenticationResponse auth =
+      QuickbridgeControlPanelController.authenticateAdmin('admin@example.com', '1234');
+    System.assertEquals(false, auth.successful);
+    System.assert(auth.message.contains('companyName is not configured'));
+
+    String sessionToken = createAdminSession();
+    QuickbridgeControlPanelController.ActionResponse refreshed =
+      QuickbridgeControlPanelController.refreshLicenses(sessionToken);
+    System.assertEquals(false, refreshed.successful);
+    System.assert(refreshed.message.contains('not configured'));
+  }
+
+  @IsTest
+  static void customSuffixFieldKeysAreSupported() {
+    delete [SELECT Id FROM Connector_Config_Value__c WHERE Connector_Key__c = 'server'];
+    insert new List<Connector_Config_Value__c>{
+      new Connector_Config_Value__c(Name = 'Server companyName', Connector_Key__c = 'server', Field_Key__c = 'CompanyName__c', Value__c = 'Acme Corp', Is_Secret_Reference__c = false),
+      new Connector_Config_Value__c(Name = 'Server username', Connector_Key__c = 'server', Field_Key__c = 'Username__c', Value__c = 'admin_user', Is_Secret_Reference__c = false),
+      new Connector_Config_Value__c(Name = 'Server password', Connector_Key__c = 'server', Field_Key__c = 'Password__c', Value__c = 'secret_pass', Is_Secret_Reference__c = false)
+    };
+    QuickbridgeAdminSecurity.bypassPermissionsForTests = true;
+    QuickbridgeAdminSecurity.bypassRateLimitForTests = true;
+    Test.setMock(HttpCalloutMock.class, new ControlPlaneMock(200, '{"status":"Success","message":"Welcome"}'));
+
+    Test.startTest();
+    QuickbridgeControlPanelController.AuthenticationResponse auth =
+      QuickbridgeControlPanelController.authenticateAdmin('admin_user', '1234');
+    Test.stopTest();
+
+    System.assertEquals(true, auth.successful);
+    System.assertEquals('admin_user', auth.username);
   }
 }

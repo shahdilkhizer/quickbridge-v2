@@ -1,5 +1,6 @@
 public with sharing class QuickbridgeControlPanelController {
   private static final String PANEL_KEY = 'quickbridge_panel';
+  private static final String SERVER_KEY = 'server';
   private static final String AVAILABLE_KEY = 'availableProductsVisible';
   private static final String RENEWAL_RECIPIENT_KEY = 'renewalRecipient';
   private static final Integer DEFAULT_WARNING_DAYS = 30;
@@ -73,10 +74,17 @@ public with sharing class QuickbridgeControlPanelController {
       result.message = 'Enter your User ID and four-digit PIN.';
       return result;
     }
+    Map<String, String> serverConfig = getServerConfig();
+    String companyName = serverConfig.get('companyname');
+    if (String.isBlank(companyName)) {
+      result.successful = false;
+      result.message = 'Quickbridge Server companyName is not configured. Please check Server settings in Connector Config.';
+      return result;
+    }
     QuickbridgeAdminSecurity.checkRateLimit(username, QuickbridgeAdminSecurity.LOGIN_BUCKET);
     try {
       HttpResponse response = sendControlPlane('/services/apexrest/v1/validateClient/', new Map<String, Object>{
-        'companyName' => '{!$Credential.Quickbridge_Server_EC.companyName}',
+        'companyName' => companyName,
         'username' => username,
         'password' => pin
       });
@@ -92,9 +100,11 @@ public with sharing class QuickbridgeControlPanelController {
         result.sessionExpiresAt = session.sessionExpiresAt;
         QuickbridgeAdminSecurity.audit('LOGIN', null, 'Success', null, null);
       } else {
+        QuickbridgeAdminSecurity.recordFailedAttempt(username, QuickbridgeAdminSecurity.LOGIN_BUCKET);
         QuickbridgeAdminSecurity.audit('LOGIN', null, 'Failed', result.message, null);
       }
     } catch (Exception error) {
+      QuickbridgeAdminSecurity.recordFailedAttempt(username, QuickbridgeAdminSecurity.LOGIN_BUCKET);
       QuickbridgeAdminSecurity.audit('LOGIN', null, 'Failed', error.getMessage(), null);
       handled('The Quickbridge control-plane connection is unavailable. Verify Quickbridge_Server_NC and try again.');
     }
@@ -111,10 +121,15 @@ public with sharing class QuickbridgeControlPanelController {
       HttpResponse response = sendControlPlane('/services/apexrest/v1/recoverPin/', new Map<String, Object>{ 'username' => username });
       Map<String, Object> payload = parseObject(response);
       Boolean success = isSuccess(response, payload);
-      if (success) QuickbridgeAdminSecurity.clearRateLimit(username, QuickbridgeAdminSecurity.RECOVERY_BUCKET);
+      if (success) {
+        QuickbridgeAdminSecurity.clearRateLimit(username, QuickbridgeAdminSecurity.RECOVERY_BUCKET);
+      } else {
+        QuickbridgeAdminSecurity.recordFailedAttempt(username, QuickbridgeAdminSecurity.RECOVERY_BUCKET);
+      }
       QuickbridgeAdminSecurity.audit('PIN_RECOVERY', null, success ? 'Success' : 'Failed', safeMessage(payload, null), null);
       return action(success, safeMessage(payload, success ? 'PIN recovery instructions were sent.' : 'PIN recovery could not be completed.'));
     } catch (Exception error) {
+      QuickbridgeAdminSecurity.recordFailedAttempt(username, QuickbridgeAdminSecurity.RECOVERY_BUCKET);
       QuickbridgeAdminSecurity.audit('PIN_RECOVERY', null, 'Failed', error.getMessage(), null);
       return action(false, 'PIN recovery is temporarily unavailable.');
     }
@@ -195,11 +210,20 @@ public with sharing class QuickbridgeControlPanelController {
   public static ActionResponse refreshLicenses(String sessionToken) {
     QuickbridgeAdminSecurity.requireManage();
     QuickbridgeAdminSecurity.requireSession(sessionToken);
+    Map<String, String> serverConfig = getServerConfig();
+    String companyName = serverConfig.get('companyname');
+    String serverUsername = serverConfig.get('username');
+    String serverPassword = serverConfig.get('password');
+
+    if (String.isBlank(companyName) || String.isBlank(serverUsername) || String.isBlank(serverPassword)) {
+      QuickbridgeAdminSecurity.audit('LICENSE_REFRESH', null, 'Failed', 'Missing server credentials in configuration', null);
+      return action(false, 'Quickbridge Server credentials (companyName, username, password) are not configured. Please complete Server configuration.');
+    }
     try {
       HttpResponse response = sendControlPlane('/services/apexrest/v1/getLicenses', new Map<String, Object>{
-        'companyName' => '{!$Credential.Quickbridge_Server_EC.companyName}',
-        'username' => '{!$Credential.Quickbridge_Server_EC.username}',
-        'password' => '{!$Credential.Quickbridge_Server_EC.password}'
+        'companyName' => companyName,
+        'username' => serverUsername,
+        'password' => serverPassword
       });
       Map<String, Object> payload = parseObject(response);
       if (!isSuccess(response, payload)) {
@@ -404,6 +428,24 @@ public with sharing class QuickbridgeControlPanelController {
   private static String panelValue(String key) {
     List<Connector_Config_Value__c> rows = [SELECT Value__c FROM Connector_Config_Value__c WHERE Connector_Key__c = :PANEL_KEY AND Field_Key__c = :key LIMIT 1];
     return rows.isEmpty() ? null : rows[0].Value__c;
+  }
+
+  private static Map<String, String> getServerConfig() {
+    Map<String, String> configMap = new Map<String, String>();
+    for (Connector_Config_Value__c row : [
+      SELECT Field_Key__c, Value__c
+      FROM Connector_Config_Value__c
+      WHERE Connector_Key__c = :SERVER_KEY
+    ]) {
+      if (String.isNotBlank(row.Field_Key__c) && String.isNotBlank(row.Value__c)) {
+        String cleanKey = row.Field_Key__c.trim().toLowerCase();
+        if (cleanKey.endsWith('__c')) {
+          cleanKey = cleanKey.removeEnd('__c');
+        }
+        configMap.put(cleanKey, row.Value__c.trim());
+      }
+    }
+    return configMap;
   }
 
   private static void savePanelValue(String key, String value) {
