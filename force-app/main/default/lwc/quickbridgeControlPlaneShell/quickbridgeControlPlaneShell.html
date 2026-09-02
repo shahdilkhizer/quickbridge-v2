@@ -1,0 +1,21 @@
+<template>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Quickbridge administration">
+      <div class="brand"><lightning-icon icon-name="utility:connected_apps" size="small"></lightning-icon><div><strong>Quickbridge</strong><span>Configuration Panel</span></div></div>
+      <nav>
+        <button class={integrationsClass} data-screen="integrations" onclick={navigate}><lightning-icon icon-name="utility:apps" size="x-small"></lightning-icon><span>Integrations</span></button>
+        <button class={reportingClass} data-screen="reporting" onclick={navigate}><lightning-icon icon-name="utility:chart" size="x-small"></lightning-icon><span>Reporting</span></button>
+        <button class={errorsClass} data-screen="errors" onclick={navigate}><lightning-icon icon-name="utility:error" size="x-small"></lightning-icon><span>Error Log</span></button>
+        <button class={mappingClass} data-screen="mapping" onclick={navigate}><lightning-icon icon-name="utility:merge_field" size="x-small"></lightning-icon><span>Field Mapping</span></button>
+        <button class={settingsClass} data-screen="settings" onclick={navigate}><lightning-icon icon-name="utility:settings" size="x-small"></lightning-icon><span>Settings</span></button>
+        <template lwc:if={showScheduler}><button class={schedulerClass} data-screen="scheduler" onclick={navigate}><lightning-icon icon-name="utility:date_time" size="x-small"></lightning-icon><span>Scheduler</span></button></template>
+      </nav>
+      <div class="sidebar-bottom">
+        <template lwc:if={hasConnector}><button class="nav-item" onclick={back}><lightning-icon icon-name="utility:back" size="x-small"></lightning-icon><span>Back</span></button></template>
+        <button class="nav-item" onclick={logout}><lightning-icon icon-name="utility:logout" size="x-small"></lightning-icon><span>Logout</span></button>
+        <small>Product of The Lodestone Group</small>
+      </div>
+    </aside>
+    <main class="workspace"><slot></slot></main>
+  </div>
+</template>

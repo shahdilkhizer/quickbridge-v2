@@ -1,0 +1,284 @@
+import { LightningElement } from 'lwc';
+import LightningConfirm from 'lightning/confirm';
+import { ShowToastEvent } from 'lightning/platformShowToastEvent';
+import authenticateAdmin from '@salesforce/apex/QuickbridgeControlPanelController.authenticateAdmin';
+import recoverPin from '@salesforce/apex/QuickbridgeControlPanelController.recoverPin';
+import revokeAdminSession from '@salesforce/apex/QuickbridgeControlPanelController.revokeAdminSession';
+import getPanelBootstrap from '@salesforce/apex/QuickbridgeControlPanelController.getPanelBootstrap';
+import refreshLicenses from '@salesforce/apex/QuickbridgeControlPanelController.refreshLicenses';
+import updateAvailableProductsVisible from '@salesforce/apex/QuickbridgeControlPanelController.updateAvailableProductsVisible';
+import sendRenewalRequest from '@salesforce/apex/QuickbridgeControlPanelController.sendRenewalRequest';
+import checkIntegrationExpiry from '@salesforce/apex/QuickbridgeControlPanelController.checkIntegrationExpiry';
+import getConnectorConfiguration from '@salesforce/apex/QuickbridgeControlPanelController.getConnectorConfiguration';
+import saveConnectorConfiguration from '@salesforce/apex/QuickbridgeControlPanelController.saveConnectorConfiguration';
+import resetConnectorConfiguration from '@salesforce/apex/QuickbridgeControlPanelController.resetConnectorConfiguration';
+import runHealthProbe from '@salesforce/apex/QuickbridgeControlPanelController.runHealthProbe';
+import setConnectorOperationalState from '@salesforce/apex/QuickbridgeControlPanelController.setConnectorOperationalState';
+import runConnector from '@salesforce/apex/QuickbridgeControlPanelController.runConnector';
+import getMappingWorkspace from '@salesforce/apex/QuickbridgeMappingFacade.getMappingWorkspace';
+import saveMappings from '@salesforce/apex/QuickbridgeMappingFacade.saveMappings';
+import clearMappings from '@salesforce/apex/QuickbridgeMappingFacade.clearMappings';
+import getDeploymentStatus from '@salesforce/apex/QuickbridgeMappingFacade.getDeploymentStatus';
+import QuickBridgeLogo from '@salesforce/resourceUrl/QuickBridge_Logo';
+
+const SESSION_ERROR_MARKERS = ['session is required', 'session is invalid', 'session expired', 'log in again'];
+
+export default class QuickbridgeConfigPanel extends LightningElement {
+  currentScreen = 'login';
+  userId = '';
+  pin = '';
+  username;
+  sessionToken;
+  sessionExpiresAt;
+  loginLoading = false;
+  loginMessage;
+  loading = false;
+  connectors = [];
+  availableProductsVisible = true;
+  selectedConnectorKey;
+  expiryAlert;
+  renewalOpen = false;
+  renewalChoices = [];
+  configLoading = false;
+  configSaving = false;
+  configEditing = false;
+  configError;
+  connectorConfiguration = {};
+  configFields = [];
+  mappingWorkspace;
+  selectedMappingOperationKey;
+  mappingLoading = false;
+  mappingSaving = false;
+  mappingError;
+  mappingDirty = false;
+  quickBridgeLogo = QuickBridgeLogo;
+
+  get isLogin() { return this.currentScreen === 'login'; }
+  get isIntegrations() { return this.currentScreen === 'integrations'; }
+  get isReporting() { return this.currentScreen === 'reporting'; }
+  get isErrors() { return this.currentScreen === 'errors'; }
+  get isMapping() { return this.currentScreen === 'mapping'; }
+  get isSettings() { return this.currentScreen === 'settings'; }
+  get isScheduler() { return this.currentScreen === 'scheduler'; }
+  get subscribedConnectors() { return this.connectors.filter((item) => item.subscribed); }
+  get availableConnectors() { return this.connectors.filter((item) => !item.subscribed); }
+  get hasSubscribed() { return this.subscribedConnectors.length > 0; }
+  get hasAvailable() { return this.availableProductsVisible && this.availableConnectors.length > 0; }
+  get availableToggleLabel() { return this.availableProductsVisible ? 'Hide Available Products' : 'Show Available Products'; }
+  get selectedConnector() { return this.connectors.find((item) => item.key === this.selectedConnectorKey); }
+  get selectedConnectorLabel() { return this.selectedConnector?.label; }
+  get showSchedulerNavigation() { return this.selectedConnector?.hasScheduler === true; }
+  get needsConnector() { return ['errors', 'mapping', 'settings', 'scheduler'].includes(this.currentScreen) && !this.selectedConnector; }
+  get loginDisabled() { return this.loginLoading || !this.userId || !/^[0-9]{4}$/.test(this.pin); }
+  get hasConfigFields() { return this.configFields.length > 0; }
+  get configSaveDisabled() { return this.configSaving || !this.configEditing; }
+  get configEditDisabled() { return this.configLoading || this.configSaving; }
+  get operationalStateLabel() { return this.selectedConnector?.active ? 'Pause' : 'Reactivate'; }
+  get runDisabled() { return !this.selectedConnector?.ready || this.loading; }
+  get hasExpiryAlert() { return this.expiryAlert?.shouldAlert === true; }
+  get expiryAlertClass() { return `expiry-alert ${this.expiryAlert?.variant || 'warning'}`; }
+  get hasMappingWorkspace() { return Boolean(this.mappingWorkspace); }
+  get hasMappingOperations() { return (this.mappingWorkspace?.operations || []).length > 0; }
+  get selectedMappingOperation() { return (this.mappingWorkspace?.operations || []).find((item) => item.workspaceKey === this.selectedMappingOperationKey) || this.mappingWorkspace?.operations?.[0]; }
+  get mappingOperationOptions() { return (this.mappingWorkspace?.operations || []).map((item) => ({ label: `${item.label} — ${item.direction}`, value: item.workspaceKey })); }
+  get mappingRows() { return this.selectedMappingOperation?.mappings || []; }
+  get mappingFieldOptions() { return this.selectedMappingOperation?.salesforceFields || []; }
+  get mappingExternalFieldOptions() { return this.selectedMappingOperation?.externalFields || []; }
+  get mappingSaveDisabled() { return this.mappingSaving || !this.mappingDirty; }
+  get mappingPresentationLabel() {
+    if (this.selectedConnector?.hasCarrier) return 'Carrier Operation Mapping';
+    if (this.selectedConnector?.hasPayment) return 'Payment Record Mapping';
+    if (this.selectedConnectorKey === 'qbo') return 'QuickBooks Parent and Line Mapping';
+    if (this.selectedConnectorKey === 'shopify') return 'Shopify Object Mapping';
+    return 'Generic Record Mapping';
+  }
+  get renewalRenewals() { return this.renewalChoices.filter((item) => item.group === 'renewal'); }
+  get renewalAdditions() { return this.renewalChoices.filter((item) => item.group === 'additional'); }
+
+  handleUserId(event) { this.userId = event.target.value.trim(); }
+  handlePin(event) { this.pin = event.target.value.replace(/\D/g, '').slice(0, 4); }
+
+  async login() {
+    if (this.loginDisabled) return;
+    this.loginLoading = true; this.loginMessage = undefined;
+    try {
+      const response = await authenticateAdmin({ userId: this.userId, pin: this.pin });
+      if (!response.successful) { this.loginMessage = response.message; return; }
+      this.sessionToken = response.sessionToken;
+      this.sessionExpiresAt = response.sessionExpiresAt;
+      this.username = response.username;
+      this.pin = '';
+      await this.refreshEntitlements(false);
+      await this.loadBootstrap();
+      this.selectedConnectorKey = undefined;
+      this.currentScreen = 'reporting';
+    } catch (error) { this.loginMessage = this.messageFrom(error); }
+    finally { this.loginLoading = false; }
+  }
+
+  async requestPinRecovery() {
+    if (!this.userId) { this.loginMessage = 'Enter your User ID first.'; return; }
+    this.loginLoading = true;
+    try { const response = await recoverPin({ userId: this.userId }); this.loginMessage = response.message; }
+    catch (error) { this.loginMessage = this.messageFrom(error); }
+    finally { this.loginLoading = false; }
+  }
+
+  async logout() {
+    try { if (this.sessionToken) await revokeAdminSession({ sessionToken: this.sessionToken }); } catch { /* local cleanup must continue */ }
+    this.clearSession();
+  }
+
+  clearSession(message) {
+    this.sessionToken = undefined; this.sessionExpiresAt = undefined; this.username = undefined; this.connectors = [];
+    this.selectedConnectorKey = undefined; this.currentScreen = 'login'; this.loginMessage = message; this.mappingWorkspace = undefined;
+  }
+
+  async loadBootstrap() {
+    this.loading = true;
+    try {
+      const response = await getPanelBootstrap({ sessionToken: this.sessionToken });
+      this.username = response.username; this.sessionExpiresAt = response.sessionExpiresAt; this.availableProductsVisible = response.availableProductsVisible;
+      this.connectors = (response.connectors || []).map((item) => this.decorateConnector(item));
+    } catch (error) { this.handleError(error, 'Quickbridge could not be loaded.'); }
+    finally { this.loading = false; }
+  }
+
+  decorateConnector(item) {
+    const logo = item.logoResourceName || 'QuickBridge_Logo';
+    return {
+      ...item,
+      logoUrl: `/resource/${logo}`,
+      statusLabel: item.active ? 'Active' : item.subscribed ? 'Subscribed' : 'Available',
+      tileClass: item.active ? 'product-tile active' : item.subscribed ? 'product-tile subscribed' : 'product-tile available',
+      readinessClass: item.ready ? 'readiness ready' : 'readiness blocked',
+      actionLabel: item.subscribed ? 'Open' : 'Setup Now'
+    };
+  }
+
+  async navigate(event) {
+    const screen = event.detail;
+    if (screen === 'scheduler' && !this.showSchedulerNavigation) return;
+    this.currentScreen = screen;
+    if (screen === 'settings' && this.selectedConnector) await this.loadConfiguration();
+    if (screen === 'mapping' && this.selectedConnector) await this.loadMappings();
+  }
+
+  backToIntegrations() { this.selectedConnectorKey = undefined; this.expiryAlert = undefined; this.mappingWorkspace = undefined; this.currentScreen = 'integrations'; }
+  goToIntegrations() { this.currentScreen = 'integrations'; }
+
+  async openConnector(event) {
+    this.selectedConnectorKey = event.currentTarget.dataset.key;
+    await this.checkExpiry();
+    if (this.selectedConnector?.subscribed) this.currentScreen = 'reporting';
+    else { this.currentScreen = 'settings'; await this.loadConfiguration(); }
+  }
+
+  async setupConnector(event) { this.selectedConnectorKey = event.currentTarget.dataset.key; await this.checkExpiry(); this.currentScreen = 'settings'; await this.loadConfiguration(); }
+
+  async checkExpiry() {
+    this.expiryAlert = undefined;
+    try { this.expiryAlert = await checkIntegrationExpiry({ sessionToken: this.sessionToken, connectorKey: this.selectedConnectorKey }); }
+    catch (error) { this.handleError(error, 'Expiry status could not be checked.', false); }
+  }
+
+  async refreshEntitlements(showToast = true) {
+    try {
+      const response = await refreshLicenses({ sessionToken: this.sessionToken });
+      if (showToast) this.toast(response.successful ? 'Licenses refreshed' : 'License refresh incomplete', response.message, response.successful ? 'success' : 'warning');
+      if (showToast) await this.loadBootstrap();
+    } catch (error) { if (showToast) this.handleError(error, 'Licenses could not be refreshed.'); }
+  }
+
+  async toggleAvailableProducts() {
+    const nextValue = !this.availableProductsVisible;
+    try { await updateAvailableProductsVisible({ sessionToken: this.sessionToken, visible: nextValue }); this.availableProductsVisible = nextValue; }
+    catch (error) { this.handleError(error, 'Display preference could not be saved.'); }
+  }
+
+  openRenewal() {
+    this.renewalChoices = [
+      ...this.subscribedConnectors.map((item) => ({ ...item, group: 'renewal', selected: false })),
+      ...this.availableConnectors.map((item) => ({ ...item, group: 'additional', selected: false }))
+    ];
+    this.renewalOpen = true;
+  }
+  closeRenewal() { this.renewalOpen = false; }
+  changeRenewalChoice(event) { const key = event.currentTarget.dataset.key; const group = event.currentTarget.dataset.group; this.renewalChoices = this.renewalChoices.map((item) => (item.key === key && item.group === group ? { ...item, selected: event.target.checked } : item)); }
+  async submitRenewal() {
+    const renewals = this.renewalChoices.filter((item) => item.group === 'renewal' && item.selected).map((item) => item.key);
+    const additions = this.renewalChoices.filter((item) => item.group === 'additional' && item.selected).map((item) => item.key);
+    try { const response = await sendRenewalRequest({ sessionToken: this.sessionToken, renewalConnectorKeys: renewals, additionalConnectorKeys: additions }); this.toast(response.successful ? 'Request sent' : 'Request not sent', response.message, response.successful ? 'success' : 'warning'); if (response.successful) this.renewalOpen = false; }
+    catch (error) { this.handleError(error, 'Renewal request could not be sent.'); }
+  }
+
+  async loadConfiguration() {
+    this.configLoading = true; this.configError = undefined; this.configEditing = false;
+    try { this.applyConfiguration(await getConnectorConfiguration({ sessionToken: this.sessionToken, connectorKey: this.selectedConnectorKey })); }
+    catch (error) { this.configError = this.messageFrom(error); this.handleSessionError(error); }
+    finally { this.configLoading = false; }
+  }
+  applyConfiguration(configuration) {
+    this.connectorConfiguration = configuration || {};
+    this.configFields = (configuration?.fields || []).map((field) => { const type = String(field.dataType || 'Text').toLowerCase(); const isBoolean = type === 'boolean'; return { ...field, isBoolean, checked: isBoolean && String(field.value).toLowerCase() === 'true', value: field.value || '', inputType: type === 'date' ? 'date' : type === 'number' ? 'number' : 'text', disabled: true }; });
+  }
+  editConfiguration() { this.configEditing = true; this.configFields = this.configFields.map((field) => ({ ...field, disabled: false })); }
+  cancelConfiguration() { this.applyConfiguration(this.connectorConfiguration); this.configEditing = false; }
+  handleConfigChange(event) { const key = event.currentTarget.dataset.key; this.configFields = this.configFields.map((field) => (field.key === key ? { ...field, value: field.isBoolean ? String(event.target.checked) : event.target.value, checked: field.isBoolean ? event.target.checked : field.checked } : field)); }
+  async saveConfiguration() {
+    const invalid = [...this.template.querySelectorAll('.config-form lightning-input')].find((input) => !input.reportValidity()); if (invalid) return;
+    this.configSaving = true;
+    try { const values = Object.fromEntries(this.configFields.map((field) => [field.key, field.isBoolean ? String(field.checked) : field.value])); const response = await saveConnectorConfiguration({ sessionToken: this.sessionToken, connectorKey: this.selectedConnectorKey, valuesJson: JSON.stringify(values) }); this.applyConfiguration(response); this.configEditing = false; this.toast('Configuration saved', 'A readiness probe will determine whether this connector can run.', 'success'); await this.probeConnection(false); await this.loadBootstrap(); }
+    catch (error) { this.handleError(error, 'Configuration could not be saved.'); }
+    finally { this.configSaving = false; }
+  }
+  async resetConfiguration() {
+    const confirmed = await LightningConfirm.open({ label: 'Delete Configuration', message: 'Clear non-secret settings and pause this connector? Credentials, mappings, work, errors, and audit history will be preserved.', variant: 'headerless' }); if (!confirmed) return;
+    try { const response = await resetConnectorConfiguration({ sessionToken: this.sessionToken, connectorKey: this.selectedConnectorKey }); this.toast('Configuration reset', response.message, 'success'); await this.loadBootstrap(); await this.loadConfiguration(); }
+    catch (error) { this.handleError(error, 'Configuration could not be reset.'); }
+  }
+  async probeConnection(showToast = true) { try { const response = await runHealthProbe({ sessionToken: this.sessionToken, connectorKey: this.selectedConnectorKey }); if (showToast) this.toast(response.successful ? 'Connection ready' : 'Connection not ready', response.message || response.status, response.successful ? 'success' : 'warning'); return response; } catch (error) { if (showToast) this.handleError(error, 'Connection validation failed.'); return null; } }
+  async runNow() { try { await runConnector({ sessionToken: this.sessionToken, connectorKey: this.selectedConnectorKey }); this.toast('Run queued', `${this.selectedConnectorLabel} was queued for the shared heartbeat.`, 'success'); } catch (error) { this.handleError(error, 'The integration could not be queued.'); } }
+  async toggleOperationalState() { try { const state = this.selectedConnector?.active ? 'Paused' : 'Active'; await setConnectorOperationalState({ sessionToken: this.sessionToken, connectorKey: this.selectedConnectorKey, requestedState: state }); this.toast('Connector updated', `${this.selectedConnectorLabel} is ${state.toLowerCase()}.`, 'success'); await this.loadBootstrap(); } catch (error) { this.handleError(error, 'Connector state could not be changed.'); } }
+
+  async loadMappings() {
+    this.mappingLoading = true; this.mappingError = undefined;
+    try { const workspace = await getMappingWorkspace({ sessionToken: this.sessionToken, connectorKey: this.selectedConnectorKey }); this.mappingWorkspace = { ...workspace, operations: (workspace.operations || []).map((operation) => ({ ...operation, mappings: (operation.mappings || []).map((row, index) => this.decorateMappingRow(row, index)) })) }; this.selectedMappingOperationKey = this.mappingWorkspace.operations?.[0]?.workspaceKey; this.mappingDirty = false; }
+    catch (error) { this.mappingError = this.messageFrom(error); this.mappingWorkspace = undefined; }
+    finally { this.mappingLoading = false; }
+  }
+  decorateMappingRow(row, index) { const source = row.source || 'New'; return { ...row, key: row.developerName || `${source}-${index}-${row.salesforceField || 'new'}`, source, active: row.active !== false, dirty: source === 'New', required: row.required === true }; }
+  changeMappingOperation(event) { this.selectedMappingOperationKey = event.detail.value; this.mappingDirty = false; }
+  addMapping() { const operation = this.selectedMappingOperation; if (!operation) return; this.replaceOperation({ ...operation, mappings: [...operation.mappings, this.decorateMappingRow({ salesforceField: '', externalPath: '', direction: operation.direction, active: true, source: 'New' }, operation.mappings.length)] }); this.mappingDirty = true; }
+  changeMapping(event) { const index = Number(event.currentTarget.dataset.index); const field = event.currentTarget.dataset.field; const value = field === 'active' ? event.target.checked : event.detail?.value ?? event.target.value; const operation = this.selectedMappingOperation; this.replaceOperation({ ...operation, mappings: operation.mappings.map((row, rowIndex) => (rowIndex === index ? { ...row, [field]: value, dirty: true } : row)) }); this.mappingDirty = true; }
+  removeMapping(event) { const index = Number(event.currentTarget.dataset.index); const operation = this.selectedMappingOperation; this.replaceOperation({ ...operation, mappings: operation.mappings.filter((row, rowIndex) => rowIndex !== index) }); this.mappingDirty = true; }
+  replaceOperation(replacement) { this.mappingWorkspace = { ...this.mappingWorkspace, operations: this.mappingWorkspace.operations.map((item) => (item.workspaceKey === replacement.workspaceKey ? replacement : item)) }; }
+  applySuggestions(event) { const byOperation = new Map(); (event.detail || []).forEach((suggestion) => { if (!byOperation.has(suggestion.workspaceKey)) byOperation.set(suggestion.workspaceKey, []); byOperation.get(suggestion.workspaceKey).push(suggestion); }); this.mappingWorkspace = { ...this.mappingWorkspace, operations: this.mappingWorkspace.operations.map((operation) => { const suggestions = byOperation.get(operation.workspaceKey) || []; if (!suggestions.length) return operation; return { ...operation, mappings: [...operation.mappings, ...suggestions.map((item, index) => this.decorateMappingRow({ salesforceField: item.salesforceField, externalPath: item.externalPath, direction: operation.direction, active: true, source: 'New' }, operation.mappings.length + index))] }; }) }; this.mappingDirty = true; }
+  async saveMappingWorkspace() {
+    const operation = this.selectedMappingOperation; if (!operation) return; this.mappingSaving = true;
+    try { const response = await saveMappings({ sessionToken: this.sessionToken, requestJson: JSON.stringify({ connectorKey: this.mappingWorkspace.connectorKey, operationKey: operation.operationKey, operationDirection: operation.direction, salesforceObject: operation.salesforceObject, externalObject: operation.externalObject, rows: operation.mappings.map((row) => ({ salesforceField: row.salesforceField, externalPath: row.externalPath, direction: row.direction, active: row.active })) }) }); await this.pollDeployment(response.deploymentId); }
+    catch (error) { this.handleError(error, 'Mappings could not be saved.'); }
+    finally { this.mappingSaving = false; }
+  }
+  async resetMappings() { const operation = this.selectedMappingOperation; if (!operation) return; this.mappingSaving = true; try { const response = await clearMappings({ sessionToken: this.sessionToken, connectorKey: this.mappingWorkspace.connectorKey, operationKey: operation.operationKey, salesforceObject: operation.salesforceObject, externalObject: operation.externalObject, direction: operation.direction }); await this.pollDeployment(response.deploymentId); } catch (error) { this.handleError(error, 'Mappings could not be reset.'); } finally { this.mappingSaving = false; } }
+  async pollDeployment(deploymentId) {
+    if (!deploymentId) { await this.loadMappings(); return; }
+    /* eslint-disable no-await-in-loop */
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const status = await getDeploymentStatus({ sessionToken: this.sessionToken, deploymentId });
+      if (status.status === 'Succeeded') { this.toast('Mappings saved', 'Effective mappings were refreshed.', 'success'); await this.loadMappings(); return; }
+      if (status.status === 'Failed') throw new Error(status.message);
+      await new Promise((resolve) => {
+        // eslint-disable-next-line @lwc/lwc/no-async-operation
+        setTimeout(resolve, 1500);
+      });
+    }
+    /* eslint-enable no-await-in-loop */
+    this.toast('Mapping deployment queued', 'Refresh Field Mapping shortly to see the completed metadata deployment.', 'info'); this.mappingDirty = false;
+  }
+
+  handleError(error, fallback, toast = true) { const message = this.messageFrom(error) || fallback; if (this.handleSessionError(error)) return; if (toast) this.toast('Quickbridge', message, 'error'); }
+  handleSessionError(error) { const message = this.messageFrom(error).toLowerCase(); if (SESSION_ERROR_MARKERS.some((marker) => message.includes(marker))) { this.clearSession('Your administrator session ended. Please log in again.'); return true; } return false; }
+  messageFrom(error) { return error?.body?.message || error?.message || 'The request could not be completed.'; }
+  toast(title, message, variant) { this.dispatchEvent(new ShowToastEvent({ title, message, variant })); }
+}

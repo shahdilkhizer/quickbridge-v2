@@ -1,0 +1,13 @@
+<template>
+  <lightning-quick-action-panel header="Quickbridge Carrier">
+    <template lwc:if={loading}><lightning-spinner alternative-text="Running carrier action"></lightning-spinner></template>
+    <template lwc:if={message}><div class={messageClass} role="status">{message}</div></template>
+    <lightning-combobox label="Carrier" value={provider} options={providers} onchange={handleProvider}></lightning-combobox>
+    <lightning-combobox class="slds-m-top_small" label="Action" value={operation} options={operations} onchange={handleOperation}></lightning-combobox>
+    <p class="slds-text-body_small slds-text-color_weak slds-m-top_medium">Shipment data is assembled from the record's active carrier mappings. Mutation requests use a stable idempotency key.</p>
+    <div slot="footer">
+      <lightning-button label="Cancel" onclick={close}></lightning-button>
+      <lightning-button class="slds-m-left_small" variant="brand" label="Run action" onclick={run} disabled={disabled}></lightning-button>
+    </div>
+  </lightning-quick-action-panel>
+</template>

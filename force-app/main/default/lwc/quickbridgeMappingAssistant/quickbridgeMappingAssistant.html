@@ -1,0 +1,9 @@
+<template>
+  <aside class="assistant" aria-labelledby="assistant-title"><div class="heading"><div><h2 id="assistant-title">Mapping Assistant</h2><p>Deterministic schema and metadata analysis.</p></div><lightning-button-icon icon-name="utility:refresh" alternative-text="Refresh analysis" onclick={analyze}></lightning-button-icon></div>
+    <div class="score"><strong>{healthScore}%</strong><div><span>{healthLabel}</span><small>{requiredMappings} required mappings · {missingCount} missing</small></div></div>
+    <template lwc:if={hasMissing}><div class="warning"><strong>Missing required fields</strong><template for:each={missingRequired} for:item="field"><span key={field}>{field}</span></template></div></template>
+    <lightning-button label="Suggest Mappings" onclick={analyze} class="suggest"></lightning-button>
+    <template lwc:if={hasSuggestions}><div class="suggestions"><template for:each={suggestions} for:item="suggestion"><label key={suggestion.key}><lightning-input type="checkbox" variant="label-hidden" label="Select suggestion" checked={suggestion.selected} data-key={suggestion.key} onchange={toggle}></lightning-input><span><strong>{suggestion.salesforceField}</strong> → {suggestion.externalPath}</span><em>{suggestion.confidence}</em></label></template></div><div class="actions"><lightning-button label="Apply High Confidence" onclick={applyHigh}></lightning-button><lightning-button variant="brand" label="Apply Selected" onclick={applySelected}></lightning-button></div></template>
+    <div class="prompt"><label>Generate Fix Prompt</label><textarea readonly>{fixPrompt}</textarea></div>
+  </aside>
+</template>
