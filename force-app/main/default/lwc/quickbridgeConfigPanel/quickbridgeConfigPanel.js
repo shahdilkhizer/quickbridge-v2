@@ -50,7 +50,13 @@ export default class QuickbridgeConfigPanel extends LightningElement {
   mappingLoading = false;
   mappingSaving = false;
   mappingError;
-  mappingDirty = false;
+  get mappingDirty() {
+    return Boolean(this.selectedMappingOperation?._mappingDirty || this.selectedMappingOperation?._settingDirty);
+  }
+  set mappingDirty(value) {
+    const operation = this.selectedMappingOperation;
+    if (operation) this.replaceOperation({ ...operation, _mappingDirty: value });
+  }
   quickBridgeLogo = QuickBridgeLogo;
 
   get isLogin() { return this.currentScreen === 'login'; }
@@ -82,9 +88,28 @@ export default class QuickbridgeConfigPanel extends LightningElement {
   get selectedMappingOperation() { return (this.mappingWorkspace?.operations || []).find((item) => item.workspaceKey === this.selectedMappingOperationKey) || this.mappingWorkspace?.operations?.[0]; }
   get mappingOperationOptions() { return (this.mappingWorkspace?.operations || []).map((item) => ({ label: `${item.label} — ${item.direction}`, value: item.workspaceKey })); }
   get mappingRows() { return this.selectedMappingOperation?.mappings || []; }
+  get hasLineItems() { return this.selectedMappingOperation?.hasLineItems === true; }
+  get headerSectionLabel() { return `${this.selectedMappingOperation?.salesforceObjectLabel || this.selectedMappingOperation?.salesforceObject || 'Header'} Mappings`; }
+  get lineSectionLabel() { return `${this.selectedMappingOperation?.childObjectLabel || 'Line Item'} Mappings`; }
+  get lineObjectLabel() { return this.selectedMappingOperation?.childObjectLabel || 'Line Item'; }
+  get headerMappingRows() { return (this.selectedMappingOperation?.mappings || []).filter((row) => !row.isLine); }
+  get lineMappingRows() { return (this.selectedMappingOperation?.mappings || []).filter((row) => row.isLine); }
   get mappingFieldOptions() { return this.selectedMappingOperation?.salesforceFields || []; }
+  get lineFieldOptions() { return this.selectedMappingOperation?.lineFields || []; }
   get mappingExternalFieldOptions() { return this.selectedMappingOperation?.externalFields || []; }
-  get mappingSaveDisabled() { return this.mappingSaving || !this.mappingDirty; }
+  get mappingSaveDisabled() { return this.mappingSaving || this.mappingPending || !this.mappingDirty; }
+  get mappingPending() { return Boolean(this.selectedMappingOperation?._pendingDeployment); }
+  get mappingResetDisabled() { return this.mappingSaving || this.mappingPending; }
+  get showRecordSaveSetting() { return ['qbo', 'shopify', 'klaviyo'].includes(this.mappingWorkspace?.connectorKey); }
+  get recordSaveDisabled() { return this.mappingSaving || this.mappingPending || !this.selectedMappingOperation?.supportsRunOnRecordSave; }
+  get recordSaveUnavailable() { return !this.selectedMappingOperation?.supportsRunOnRecordSave; }
+  handleRecordSaveChange(event) {
+    const operation = this.selectedMappingOperation;
+    if (!operation || this.recordSaveDisabled) return;
+    const checked = event.target.checked;
+    this.replaceOperation({ ...operation, runOnRecordSave: checked,
+      _settingDirty: checked !== operation._savedRunOnRecordSave });
+  }
   get mappingPresentationLabel() {
     if (this.selectedConnector?.hasCarrier) return 'Carrier Operation Mapping';
     if (this.selectedConnector?.hasPayment) return 'Payment Record Mapping';
@@ -241,40 +266,176 @@ export default class QuickbridgeConfigPanel extends LightningElement {
   async runNow() { try { await runConnector({ sessionToken: this.sessionToken, connectorKey: this.selectedConnectorKey }); this.toast('Run queued', `${this.selectedConnectorLabel} was queued for the shared heartbeat.`, 'success'); } catch (error) { this.handleError(error, 'The integration could not be queued.'); } }
   async toggleOperationalState() { try { const state = this.selectedConnector?.active ? 'Paused' : 'Active'; await setConnectorOperationalState({ sessionToken: this.sessionToken, connectorKey: this.selectedConnectorKey, requestedState: state }); this.toast('Connector updated', `${this.selectedConnectorLabel} is ${state.toLowerCase()}.`, 'success'); await this.loadBootstrap(); } catch (error) { this.handleError(error, 'Connector state could not be changed.'); } }
 
-  async loadMappings() {
+  async loadMappings(refreshedKey) {
     this.mappingLoading = true; this.mappingError = undefined;
-    try { const workspace = await getMappingWorkspace({ sessionToken: this.sessionToken, connectorKey: this.selectedConnectorKey }); this.mappingWorkspace = { ...workspace, operations: (workspace.operations || []).map((operation) => ({ ...operation, mappings: (operation.mappings || []).map((row, index) => this.decorateMappingRow(row, index)) })) }; this.selectedMappingOperationKey = this.mappingWorkspace.operations?.[0]?.workspaceKey; this.mappingDirty = false; }
-    catch (error) { this.mappingError = this.messageFrom(error); this.mappingWorkspace = undefined; }
+    const oldWorkspace = this.mappingWorkspace;
+    const selectedKey = this.selectedMappingOperationKey;
+    try {
+      const workspace = await getMappingWorkspace({ sessionToken: this.sessionToken, connectorKey: this.selectedConnectorKey });
+      const previous = oldWorkspace?.connectorKey === workspace.connectorKey
+        ? new Map((oldWorkspace.operations || []).map((operation) => [operation.workspaceKey, operation]))
+        : new Map();
+      this.mappingWorkspace = { ...workspace, operations: (workspace.operations || []).map((operation) => {
+        const draft = previous.get(operation.workspaceKey);
+        if (operation.workspaceKey !== refreshedKey && draft &&
+            (draft._mappingDirty || draft._settingDirty || draft._pendingDeployment)) return draft;
+        return { ...operation, runOnRecordSave: operation.runOnRecordSave === true,
+          _savedRunOnRecordSave: operation.runOnRecordSave === true,
+          _mappingDirty: false, _settingDirty: false, _pendingDeployment: null,
+          mappings: (operation.mappings || []).map((row, index) => this.decorateMappingRow(row, index)) };
+      }) };
+      this.selectedMappingOperationKey = this.mappingWorkspace.operations.some((operation) => operation.workspaceKey === selectedKey)
+        ? selectedKey : this.mappingWorkspace.operations?.[0]?.workspaceKey;
+      return true;
+    } catch (error) { this.mappingError = this.messageFrom(error); return false; }
     finally { this.mappingLoading = false; }
   }
-  decorateMappingRow(row, index) { const source = row.source || 'New'; return { ...row, key: row.developerName || `${source}-${index}-${row.salesforceField || 'new'}`, source, active: row.active !== false, dirty: source === 'New', required: row.required === true }; }
-  changeMappingOperation(event) { this.selectedMappingOperationKey = event.detail.value; this.mappingDirty = false; }
-  addMapping() { const operation = this.selectedMappingOperation; if (!operation) return; this.replaceOperation({ ...operation, mappings: [...operation.mappings, this.decorateMappingRow({ salesforceField: '', externalPath: '', direction: operation.direction, active: true, source: 'New' }, operation.mappings.length)] }); this.mappingDirty = true; }
+  decorateMappingRow(row, index) {
+    const source = row.source || 'New';
+    const isLine = row.isLine === true;
+    const prefix = isLine ? 'line' : 'header';
+    return {
+      ...row,
+      key: row.developerName || `${prefix}-${source}-${index}-${row.salesforceField || 'new'}`,
+      source,
+      isLine,
+      salesforceObject: row.salesforceObject || '',
+      active: row.active !== false,
+      dirty: source === 'New',
+      required: row.required === true
+    };
+  }
+  changeMappingOperation(event) { this.selectedMappingOperationKey = event.detail.value; }
+  addMapping() { this.addHeaderMapping(); }
+  addHeaderMapping() {
+    const operation = this.selectedMappingOperation;
+    if (!operation) return;
+    const newRow = this.decorateMappingRow({
+      salesforceField: '',
+      externalPath: '',
+      direction: operation.direction,
+      active: true,
+      source: 'New',
+      isLine: false,
+      salesforceObject: operation.salesforceObject
+    }, operation.mappings.length);
+    this.replaceOperation({ ...operation, mappings: [...operation.mappings, newRow] });
+    this.mappingDirty = true;
+  }
+  addLineMapping() {
+    const operation = this.selectedMappingOperation;
+    if (!operation) return;
+    const existingLineRow = operation.mappings.find((m) => m.isLine);
+    const newRow = this.decorateMappingRow({
+      salesforceField: '',
+      externalPath: '',
+      direction: operation.direction,
+      active: true,
+      source: 'New',
+      isLine: true,
+      salesforceObject: existingLineRow?.salesforceObject || '',
+      collectionPath: operation.collectionPath
+    }, operation.mappings.length);
+    this.replaceOperation({ ...operation, mappings: [...operation.mappings, newRow] });
+    this.mappingDirty = true;
+  }
+  changeMappingByKey(event) {
+    const key = event.currentTarget.dataset.key;
+    const field = event.currentTarget.dataset.field;
+    const value = field === 'active' ? event.target.checked : event.detail?.value ?? event.target.value;
+    const operation = this.selectedMappingOperation;
+    if (!operation) return;
+    this.replaceOperation({
+      ...operation,
+      mappings: operation.mappings.map((row) => (row.key === key ? { ...row, [field]: value, dirty: true } : row))
+    });
+    this.mappingDirty = true;
+  }
+  removeMappingByKey(event) {
+    const key = event.currentTarget.dataset.key;
+    const operation = this.selectedMappingOperation;
+    if (!operation) return;
+    this.replaceOperation({
+      ...operation,
+      mappings: operation.mappings.filter((row) => row.key !== key)
+    });
+    this.mappingDirty = true;
+  }
   changeMapping(event) { const index = Number(event.currentTarget.dataset.index); const field = event.currentTarget.dataset.field; const value = field === 'active' ? event.target.checked : event.detail?.value ?? event.target.value; const operation = this.selectedMappingOperation; this.replaceOperation({ ...operation, mappings: operation.mappings.map((row, rowIndex) => (rowIndex === index ? { ...row, [field]: value, dirty: true } : row)) }); this.mappingDirty = true; }
   removeMapping(event) { const index = Number(event.currentTarget.dataset.index); const operation = this.selectedMappingOperation; this.replaceOperation({ ...operation, mappings: operation.mappings.filter((row, rowIndex) => rowIndex !== index) }); this.mappingDirty = true; }
   replaceOperation(replacement) { this.mappingWorkspace = { ...this.mappingWorkspace, operations: this.mappingWorkspace.operations.map((item) => (item.workspaceKey === replacement.workspaceKey ? replacement : item)) }; }
-  applySuggestions(event) { const byOperation = new Map(); (event.detail || []).forEach((suggestion) => { if (!byOperation.has(suggestion.workspaceKey)) byOperation.set(suggestion.workspaceKey, []); byOperation.get(suggestion.workspaceKey).push(suggestion); }); this.mappingWorkspace = { ...this.mappingWorkspace, operations: this.mappingWorkspace.operations.map((operation) => { const suggestions = byOperation.get(operation.workspaceKey) || []; if (!suggestions.length) return operation; return { ...operation, mappings: [...operation.mappings, ...suggestions.map((item, index) => this.decorateMappingRow({ salesforceField: item.salesforceField, externalPath: item.externalPath, direction: operation.direction, active: true, source: 'New' }, operation.mappings.length + index))] }; }) }; this.mappingDirty = true; }
+  applySuggestions(event) { const byOperation = new Map(); (event.detail || []).forEach((suggestion) => { if (!byOperation.has(suggestion.workspaceKey)) byOperation.set(suggestion.workspaceKey, []); byOperation.get(suggestion.workspaceKey).push(suggestion); }); this.mappingWorkspace = { ...this.mappingWorkspace, operations: this.mappingWorkspace.operations.map((operation) => { const suggestions = byOperation.get(operation.workspaceKey) || []; if (!suggestions.length) return operation; return { ...operation, _mappingDirty: true, mappings: [...operation.mappings, ...suggestions.map((item, index) => this.decorateMappingRow({ salesforceField: item.salesforceField, externalPath: item.externalPath, direction: operation.direction, active: true, source: 'New', isLine: false, salesforceObject: operation.salesforceObject }, operation.mappings.length + index))] }; }) }; this.mappingDirty = true; }
   async saveMappingWorkspace() {
-    const operation = this.selectedMappingOperation; if (!operation) return; this.mappingSaving = true;
-    try { const response = await saveMappings({ sessionToken: this.sessionToken, requestJson: JSON.stringify({ connectorKey: this.mappingWorkspace.connectorKey, operationKey: operation.operationKey, operationDirection: operation.direction, salesforceObject: operation.salesforceObject, externalObject: operation.externalObject, rows: operation.mappings.map((row) => ({ salesforceField: row.salesforceField, externalPath: row.externalPath, direction: row.direction, active: row.active })) }) }); await this.pollDeployment(response.deploymentId); }
-    catch (error) { this.handleError(error, 'Mappings could not be saved.'); }
+    const operation = this.selectedMappingOperation;
+    if (!operation || this.mappingSaveDisabled) return;
+    this.mappingSaving = true;
+    const key = operation.workspaceKey;
+    try {
+      const request = {
+        connectorKey: this.mappingWorkspace.connectorKey, operationKey: operation.operationKey,
+        operationDirection: operation.direction, salesforceObject: operation.salesforceObject,
+        externalObject: operation.externalObject
+      };
+      if (operation._settingDirty) request.runOnRecordSave = operation.runOnRecordSave;
+      if (operation._mappingDirty) request.rows = operation.mappings.map((row) => ({
+        salesforceField: row.salesforceField, externalPath: row.externalPath,
+        direction: row.direction, active: row.active, isLine: row.isLine === true,
+        salesforceObject: row.salesforceObject
+      }));
+      const response = await saveMappings({ sessionToken: this.sessionToken, requestJson: JSON.stringify(request) });
+      await this.pollDeployment(response.deploymentId, key);
+    } catch (error) { this.handleError(error, 'Mappings could not be saved.'); }
     finally { this.mappingSaving = false; }
   }
-  async resetMappings() { const operation = this.selectedMappingOperation; if (!operation) return; this.mappingSaving = true; try { const response = await clearMappings({ sessionToken: this.sessionToken, connectorKey: this.mappingWorkspace.connectorKey, operationKey: operation.operationKey, salesforceObject: operation.salesforceObject, externalObject: operation.externalObject, direction: operation.direction }); await this.pollDeployment(response.deploymentId); } catch (error) { this.handleError(error, 'Mappings could not be reset.'); } finally { this.mappingSaving = false; } }
-  async pollDeployment(deploymentId) {
-    if (!deploymentId) { await this.loadMappings(); return; }
+  async resetMappings() {
+    const operation = this.selectedMappingOperation;
+    if (!operation || this.mappingResetDisabled) return;
+    this.mappingSaving = true;
+    try {
+      const response = await clearMappings({ sessionToken: this.sessionToken, connectorKey: this.mappingWorkspace.connectorKey,
+        operationKey: operation.operationKey, salesforceObject: operation.salesforceObject,
+        externalObject: operation.externalObject, direction: operation.direction });
+      await this.pollDeployment(response.deploymentId, operation.workspaceKey);
+    } catch (error) { this.handleError(error, 'Mappings could not be reset.'); }
+    finally { this.mappingSaving = false; }
+  }
+  setMappingPending(workspaceKey, deploymentId) {
+    const operation = this.mappingWorkspace?.operations.find((item) => item.workspaceKey === workspaceKey);
+    if (operation) this.replaceOperation({ ...operation, _pendingDeployment: deploymentId });
+  }
+  async checkMappingDeployment() {
+    const operation = this.selectedMappingOperation;
+    if (!operation?._pendingDeployment || this.mappingSaving) return;
+    this.mappingSaving = true;
+    try { await this.pollDeployment(operation._pendingDeployment, operation.workspaceKey); }
+    catch (error) { this.handleError(error, 'Mapping deployment could not be checked.'); }
+    finally { this.mappingSaving = false; }
+  }
+  async pollDeployment(deploymentId, workspaceKey) {
+    if (!deploymentId) { await this.loadMappings(workspaceKey); return; }
+    this.setMappingPending(workspaceKey, deploymentId);
     /* eslint-disable no-await-in-loop */
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const status = await getDeploymentStatus({ sessionToken: this.sessionToken, deploymentId });
-      if (status.status === 'Succeeded') { this.toast('Mappings saved', 'Effective mappings were refreshed.', 'success'); await this.loadMappings(); return; }
-      if (status.status === 'Failed') throw new Error(status.message);
+      if (status.status === 'Succeeded') {
+        if (!await this.loadMappings(workspaceKey)) {
+          this.toast('Refresh required', 'Deployment succeeded, but the saved settings could not be reloaded. Check deployment status to retry.', 'warning');
+          return;
+        }
+        this.toast('Mappings saved', 'Mappings and record-save settings were refreshed.', 'success');
+        return;
+      }
+      if (status.status === 'Failed') {
+        this.setMappingPending(workspaceKey, null);
+        throw new Error(status.message || 'Mapping deployment failed. The saved settings were not changed.');
+      }
       await new Promise((resolve) => {
         // eslint-disable-next-line @lwc/lwc/no-async-operation
         setTimeout(resolve, 1500);
       });
     }
     /* eslint-enable no-await-in-loop */
-    this.toast('Mapping deployment queued', 'Refresh Field Mapping shortly to see the completed metadata deployment.', 'info'); this.mappingDirty = false;
+    this.toast('Mapping deployment pending', 'The record-save setting takes effect only after deployment succeeds. Check deployment status to refresh.', 'info');
   }
 
   handleError(error, fallback, toast = true) { const message = this.messageFrom(error) || fallback; if (this.handleSessionError(error)) return; if (toast) this.toast('Quickbridge', message, 'error'); }

@@ -397,6 +397,107 @@ public inherited sharing class GenericIntegrationRuntime {
     return query + ' WHERE Id IN :recordIds ORDER BY Id';
   }
 
+  private class ChildCollectionGroup {
+    public String collectionPath;
+    public String childObject;
+    public String parentField;
+    public List<MappingRule> mappings = new List<MappingRule>();
+  }
+
+  private static List<ChildCollectionGroup> resolveChildCollectionGroups(
+    OperationDefinition definition
+  ) {
+    List<ChildCollectionGroup> groups = new List<ChildCollectionGroup>();
+    Map<String, ChildCollectionGroup> groupsByKey = new Map<String, ChildCollectionGroup>();
+    for (MappingRule mapping : definition.mappings) {
+      if (
+        !isOutboundMapping(mapping) ||
+        String.isBlank(mapping.collectionPath) ||
+        String.isBlank(mapping.parentSalesforceField) ||
+        String.isBlank(mapping.salesforceObject) ||
+        equivalentObject(mapping.salesforceObject, definition.salesforceObject)
+      ) {
+        continue;
+      }
+      String groupKey = String.join(
+        new List<String>{
+          normalize(mapping.collectionPath),
+          normalize(mapping.salesforceObject),
+          normalize(mapping.parentSalesforceField)
+        },
+        '::'
+      );
+      if (!groupsByKey.containsKey(groupKey)) {
+        ChildCollectionGroup newGroup = new ChildCollectionGroup();
+        newGroup.collectionPath = mapping.collectionPath;
+        newGroup.childObject = mapping.salesforceObject;
+        newGroup.parentField = mapping.parentSalesforceField;
+        groupsByKey.put(groupKey, newGroup);
+        groups.add(newGroup);
+      }
+      groupsByKey.get(groupKey).mappings.add(mapping);
+    }
+    return groups;
+  }
+
+  private static Map<String, Map<Id, List<SObject>>> queryChildCollections(
+    List<ChildCollectionGroup> groups,
+    Set<Id> parentIds
+  ) {
+    Map<String, Map<Id, List<SObject>>> result = new Map<String, Map<Id, List<SObject>>>();
+    if (groups.isEmpty() || parentIds.isEmpty()) {
+      return result;
+    }
+
+    for (ChildCollectionGroup groupItem : groups) {
+      Schema.SObjectType childType = resolveObjectType(groupItem.childObject);
+      if (childType == null) {
+        continue;
+      }
+      Map<String, Schema.SObjectField> childFields = childType.getDescribe().fields.getMap();
+      String resolvedParentField = resolveFieldName(childFields, groupItem.parentField);
+
+      Set<String> selectFields = new Set<String>{ 'Id', resolvedParentField };
+      for (MappingRule rule : groupItem.mappings) {
+        if (String.isNotBlank(rule.salesforceField)) {
+          if (rule.salesforceField.contains('.')) {
+            selectFields.add(rule.salesforceField);
+          } else if (childFields.containsKey(rule.salesforceField)) {
+            selectFields.add(resolveFieldName(childFields, rule.salesforceField));
+          }
+        }
+      }
+
+      List<String> orderedFields = new List<String>(selectFields);
+      orderedFields.sort();
+      String query =
+        'SELECT ' +
+        String.join(orderedFields, ',') +
+        ' FROM ' +
+        childType.getDescribe().getName() +
+        ' WHERE ' +
+        resolvedParentField +
+        ' IN :parentIds ORDER BY ' +
+        resolvedParentField +
+        ', Id';
+
+      List<SObject> childRows = Database.query(query);
+      Map<Id, List<SObject>> byParent = new Map<Id, List<SObject>>();
+      for (SObject childRow : childRows) {
+        Id parentId = (Id) childRow.get(resolvedParentField);
+        if (parentId == null) {
+          continue;
+        }
+        if (!byParent.containsKey(parentId)) {
+          byParent.put(parentId, new List<SObject>());
+        }
+        byParent.get(parentId).add(childRow);
+      }
+      result.put(groupItem.collectionPath, byParent);
+    }
+    return result;
+  }
+
   public static String buildRequestBody(
     OperationDefinition definition,
     List<SObject> records,
@@ -406,6 +507,20 @@ public inherited sharing class GenericIntegrationRuntime {
       validateJsonIfRequired(request.payload, definition.responseContentType);
       return request.payload;
     }
+
+    List<ChildCollectionGroup> childGroups = resolveChildCollectionGroups(definition);
+    Set<Id> parentIds = new Set<Id>();
+    if (records != null) {
+      for (SObject record : records) {
+        if (record.Id != null) {
+          parentIds.add(record.Id);
+        }
+      }
+    }
+    Map<String, Map<Id, List<SObject>>> childDataByCollection = queryChildCollections(
+      childGroups,
+      parentIds
+    );
 
     List<Object> payloads = new List<Object>();
     for (SObject recordValue : records == null ? new List<SObject>() : records) {
@@ -431,6 +546,41 @@ public inherited sharing class GenericIntegrationRuntime {
           }
         }
         putPath(mapped, mapping.externalPath, transformed);
+      }
+
+      for (ChildCollectionGroup groupItem : childGroups) {
+        Map<Id, List<SObject>> byParent = childDataByCollection.get(groupItem.collectionPath);
+        List<SObject> children = (byParent != null && recordValue.Id != null)
+          ? byParent.get(recordValue.Id)
+          : null;
+        List<Object> childPayloads = new List<Object>();
+        if (children != null) {
+          for (SObject childRecord : children) {
+            Map<String, Object> childMapped = new Map<String, Object>();
+            for (MappingRule childMapping : groupItem.mappings) {
+              Object sourceValue = String.isBlank(childMapping.salesforceField)
+                ? null
+                : readSObjectField(childRecord, childMapping.salesforceField);
+              Object transformed = transform(sourceValue, childMapping.transform);
+              if (transformed == null) {
+                if (String.isNotBlank(childMapping.defaultValue)) {
+                  transformed = transform(childMapping.defaultValue, childMapping.transform);
+                } else if (childMapping.required == true) {
+                  throw new GenericIntegrationRuntimeException(
+                    'Required child outbound mapping is blank: ' + childMapping.salesforceField
+                  );
+                } else if (normalize(childMapping.nullBehavior) != 'include') {
+                  continue;
+                }
+              }
+              putPath(childMapped, childMapping.externalPath, transformed);
+            }
+            childPayloads.add(childMapped);
+          }
+        }
+        if (!childPayloads.isEmpty()) {
+          putPath(mapped, groupItem.collectionPath, childPayloads);
+        }
       }
 
       Object payload = String.isBlank(definition.requestTemplate)
@@ -894,32 +1044,96 @@ public inherited sharing class GenericIntegrationRuntime {
     return definition;
   }
 
+  // Metadata is immutable within a transaction; prime all requested connectors in bulk.
+  private static Set<String> loadedMappingConnectors = new Set<String>();
+  private static List<Integration_Operation_Mapping__mdt> cachedMappingRows =
+    new List<Integration_Operation_Mapping__mdt>();
+  private static List<Field_Mapping__mdt> cachedOverrideRows = new List<Field_Mapping__mdt>();
+  @TestVisible private static List<Integration_Operation_Mapping__mdt> testMappingRows;
+  @TestVisible private static List<Field_Mapping__mdt> testOverrideRows;
+
+  public static void primeMappingCache(Set<String> connectorKeys) {
+    Set<String> missing = new Set<String>();
+    for (String key : connectorKeys) {
+      if (String.isNotBlank(key) && !loadedMappingConnectors.contains(key.toLowerCase())) {
+        missing.add(key.toLowerCase());
+      }
+    }
+    if (missing.isEmpty()) return;
+    Set<String> aliases = new Set<String>();
+    for (String key : missing) aliases.addAll(mappingAliases(key));
+    cachedMappingRows.addAll(Test.isRunningTest() && testMappingRows != null
+      ? testMappingRows
+      : [
+        SELECT Active__c, Connector_Key__c, Operation_Key__c, Direction__c,
+          Salesforce_Object__c, Salesforce_Field__c, External_Path__c, Transform__c,
+          Default_Value__c, Required__c, Is_External_Id__c, Null_Behavior__c,
+          Collection_Path__c, Parent_Salesforce_Field__c, Parent_External_Path__c, Sort_Order__c
+        FROM Integration_Operation_Mapping__mdt
+        WHERE Active__c = true AND Connector_Key__c IN :missing
+        ORDER BY Sort_Order__c ASC
+      ]);
+    cachedOverrideRows.addAll(Test.isRunningTest() && testOverrideRows != null
+      ? testOverrideRows
+      : [
+        SELECT Integration__c, Action__c, SF_Object__c, SF_Field__c,
+          External_Field__c, Sync_Direction__c, Is_Active__c
+        FROM Field_Mapping__mdt
+        WHERE Is_Active__c = true AND Integration__c IN :aliases
+      ]);
+    loadedMappingConnectors.addAll(missing);
+  }
+
+  // Does not resolve an endpoint, require credentials, or perform callouts.
+  public static Boolean hasRecordSaveChildObject(Integration_Operation__mdt operation, String objectName) {
+    primeMappingCache(new Set<String>{ operation.Connector_Key__c });
+    for (Integration_Operation_Mapping__mdt row : cachedMappingRows) {
+      if (row.Active__c == true && row.Connector_Key__c.equalsIgnoreCase(operation.Connector_Key__c) &&
+          row.Operation_Key__c.equalsIgnoreCase(operation.Operation_Key__c) &&
+          equivalentObject(row.Salesforce_Object__c, objectName) &&
+          String.isNotBlank(row.Parent_Salesforce_Field__c)) return true;
+    }
+    return false;
+  }
+
+  // Does not resolve an endpoint, require credentials, or perform callouts.
+  public static List<MappingRule> recordSaveMappings(
+    Integration_Operation__mdt operation, Boolean includeOverrides
+  ) {
+    OperationDefinition definition = new OperationDefinition();
+    definition.connectorKey = operation.Connector_Key__c;
+    definition.operationKey = operation.Operation_Key__c;
+    definition.salesforceObject = operation.Salesforce_Object__c;
+    definition.externalEntity = operation.External_Entity__c;
+    definition.salesforceExternalIdField = operation.Salesforce_External_Id_Field__c;
+    loadMappings(definition, includeOverrides);
+    return definition.mappings;
+  }
+
+  private static Set<String> mappingAliases(String connectorKey) {
+    Set<String> aliases = new Set<String>{ connectorKey.toLowerCase() };
+    if (normalize(connectorKey) == 'qbo') aliases.addAll(new Set<String>{ 'qbonline', 'quickbooks' });
+    return aliases;
+  }
+
+  @TestVisible private static void resetMappingCache() {
+    loadedMappingConnectors.clear();
+    cachedMappingRows.clear();
+    cachedOverrideRows.clear();
+  }
+
   private static void loadMappings(OperationDefinition definition) {
-    List<Integration_Operation_Mapping__mdt> rows = [
-      SELECT
-        Active__c,
-        Connector_Key__c,
-        Operation_Key__c,
-        Direction__c,
-        Salesforce_Object__c,
-        Salesforce_Field__c,
-        External_Path__c,
-        Transform__c,
-        Default_Value__c,
-        Required__c,
-        Is_External_Id__c,
-        Null_Behavior__c,
-        Collection_Path__c,
-        Parent_Salesforce_Field__c,
-        Parent_External_Path__c,
-        Sort_Order__c
-      FROM Integration_Operation_Mapping__mdt
-      WHERE
-        Active__c = true
-        AND Connector_Key__c = :definition.connectorKey
-        AND Operation_Key__c = :definition.operationKey
-      ORDER BY Sort_Order__c ASC
-    ];
+    loadMappings(definition, true);
+  }
+
+  private static void loadMappings(OperationDefinition definition, Boolean includeOverrides) {
+    primeMappingCache(new Set<String>{ definition.connectorKey });
+    List<Integration_Operation_Mapping__mdt> rows = new List<Integration_Operation_Mapping__mdt>();
+    for (Integration_Operation_Mapping__mdt row : cachedMappingRows) {
+      if (row.Active__c == true &&
+          row.Connector_Key__c.equalsIgnoreCase(definition.connectorKey) &&
+          row.Operation_Key__c.equalsIgnoreCase(definition.operationKey)) rows.add(row);
+    }
     for (Integration_Operation_Mapping__mdt row : rows) {
       MappingRule mapping = new MappingRule();
       mapping.connectorKey = row.Connector_Key__c;
@@ -939,24 +1153,31 @@ public inherited sharing class GenericIntegrationRuntime {
       mapping.sortOrder = row.Sort_Order__c == null ? 999 : row.Sort_Order__c.intValue();
       definition.mappings.add(mapping);
     }
-    applyFieldMappingOverrides(definition);
+    if (includeOverrides == true) applyFieldMappingOverrides(definition);
   }
 
   private static void applyFieldMappingOverrides(OperationDefinition definition) {
-    Set<String> connectorAliases = new Set<String>{ definition.connectorKey };
-    if (normalize(definition.connectorKey) == 'qbo') {
-      connectorAliases.addAll(new Set<String>{ 'qbonline', 'quickbooks', 'QuickBooks' });
+    Set<String> connectorAliases = mappingAliases(definition.connectorKey);
+    List<Field_Mapping__mdt> overrides = new List<Field_Mapping__mdt>();
+    for (Field_Mapping__mdt row : cachedOverrideRows) {
+      if (row.Is_Active__c == true && row.Integration__c != null &&
+          connectorAliases.contains(row.Integration__c.toLowerCase())) overrides.add(row);
     }
-    if (normalize(definition.connectorKey) == 'shopify') connectorAliases.add('Shopify');
-    List<Field_Mapping__mdt> overrides = [
-      SELECT Integration__c, Action__c, SF_Object__c, SF_Field__c,
-        External_Field__c, Sync_Direction__c, Is_Active__c
-      FROM Field_Mapping__mdt
-      WHERE Is_Active__c = true AND Integration__c IN :connectorAliases
-    ];
+    Map<String, String> childCollectionPaths = new Map<String, String>();
+    Map<String, String> childParentFields = new Map<String, String>();
+    for (MappingRule defMap : definition.mappings) {
+      if (String.isNotBlank(defMap.collectionPath) && String.isNotBlank(defMap.salesforceObject)) {
+        childCollectionPaths.put(normalize(defMap.salesforceObject), defMap.collectionPath);
+        if (String.isNotBlank(defMap.parentSalesforceField)) {
+          childParentFields.put(normalize(defMap.salesforceObject), defMap.parentSalesforceField);
+        }
+      }
+    }
     Map<String, MappingRule> overrideByKey = new Map<String, MappingRule>();
     for (Field_Mapping__mdt row : overrides) {
-      if (!equivalentObject(row.SF_Object__c, definition.salesforceObject)) continue;
+      Boolean isParent = equivalentObject(row.SF_Object__c, definition.salesforceObject);
+      Boolean isChild = childCollectionPaths.containsKey(normalize(row.SF_Object__c));
+      if (!isParent && !isChild) continue;
       if (String.isNotBlank(row.Action__c) &&
           normalize(row.Action__c) != normalize(definition.operationKey) &&
           normalize(row.Action__c) != normalize(definition.externalEntity)) continue;
@@ -973,6 +1194,10 @@ public inherited sharing class GenericIntegrationRuntime {
         normalize(definition.salesforceExternalIdField);
       mapping.nullBehavior = 'Omit';
       mapping.sortOrder = 500;
+      if (isChild) {
+        mapping.collectionPath = childCollectionPaths.get(normalize(row.SF_Object__c));
+        mapping.parentSalesforceField = childParentFields.get(normalize(row.SF_Object__c));
+      }
       validateMapping(mapping, definition);
       overrideByKey.put(mappingKey(mapping), mapping);
     }

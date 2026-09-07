@@ -43,6 +43,17 @@ public with sharing class ConnectorConfigService {
     return instanceRecord != null && instanceRecord.Active__c == true;
   }
 
+  // Bulk equivalent of isActive, preserving this service's sharing behavior.
+  public static Set<String> activeConnectorKeys(Set<String> connectorKeys) {
+    Set<String> active = new Set<String>();
+    if (connectorKeys == null || connectorKeys.isEmpty()) return active;
+    for (Connector_Instance__c instanceRecord : [
+      SELECT Connector_Key__c FROM Connector_Instance__c
+      WHERE Connector_Key__c IN :connectorKeys AND Active__c = true
+    ]) active.add(normalize(instanceRecord.Connector_Key__c));
+    return active;
+  }
+
   public static String namedCredentialFor(String connectorKey) {
     Connector_Instance__c instanceRecord = getInstance(connectorKey);
     return instanceRecord == null ? null : instanceRecord.Named_Credential__c;

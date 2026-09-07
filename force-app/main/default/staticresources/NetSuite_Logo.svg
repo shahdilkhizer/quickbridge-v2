@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 96" role="img" aria-labelledby="title">
+  <title id="title">NetSuite</title>
+  <rect width="360" height="96" rx="14" fill="#ffffff"/>
+  <path d="M38 20h44c8.8 0 16 7.2 16 16v24c0 8.8-7.2 16-16 16H38c-8.8 0-16-7.2-16-16V36c0-8.8 7.2-16 16-16z" fill="#1f6f8b"/>
+  <path d="M50 34h38v12H62v16H50V34z" fill="#ffffff"/>
+  <path d="M74 50h14v12H62V50h12z" fill="#ffffff" opacity=".82"/>
+  <text x="118" y="61" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="700" fill="#2f3f4a" letter-spacing="0">NetSuite</text>
+</svg>

@@ -1,211 +1,103 @@
 public without sharing class IntegrationEventApi {
   private static Boolean dispatching = false;
+  private static List<Integration_Operation__mdt> operationCache;
+  @TestVisible private static List<Integration_Operation__mdt> testOperations;
+
+  public static Boolean controlsRecordSave(String connectorKey) {
+    return new Set<String>{ 'qbo', 'shopify', 'klaviyo' }.contains(
+      String.isBlank(connectorKey) ? '' : connectorKey.trim().toLowerCase()
+    );
+  }
+
+  public static Boolean supportsRecordSave(String connectorKey, String direction) {
+    return controlsRecordSave(connectorKey) && allowsOutbound(direction);
+  }
+
+  private static List<Integration_Operation__mdt> operations() {
+    if (Test.isRunningTest() && testOperations != null) return testOperations;
+    if (operationCache == null) {
+      operationCache = [
+        SELECT Connector_Key__c, Operation_Key__c, Salesforce_Object__c, Direction__c,
+          External_Entity__c, Salesforce_External_Id_Field__c, Active__c, Run_On_Record_Save__c
+        FROM Integration_Operation__mdt WHERE Active__c = true
+      ];
+    }
+    return operationCache;
+  }
 
   public static void dispatch(
-    String objectApiName,
-    String eventName,
-    List<SObject> newRecords,
+    String objectApiName, String eventName, List<SObject> newRecords,
     Map<Id, SObject> oldRecords
   ) {
-    if (
-      dispatching ||
-      String.isBlank(objectApiName) ||
-      !new Set<String>{ 'afterInsert', 'afterUpdate', 'afterDelete' }.contains(
-        eventName
-      )
-    ) {
-      return;
-    }
-    List<SObject> records = newRecords == null ? new List<SObject>() : newRecords;
-    if (records.isEmpty()) {
-      return;
-    }
-    validateObject(objectApiName, records);
+    if (dispatching || String.isBlank(objectApiName) ||
+        !new Set<String>{ 'afterInsert', 'afterUpdate', 'afterDelete' }.contains(eventName) ||
+        newRecords == null || newRecords.isEmpty()) return;
+    validateObject(objectApiName, newRecords);
     dispatching = true;
     try {
-      List<IntegrationWorkRequest> requests = new List<IntegrationWorkRequest>();
-      requests.addAll(
-        directRequests(objectApiName, eventName, records, oldRecords)
-      );
-      requests.addAll(
-        parentRequests(objectApiName, eventName, records, oldRecords)
-      );
-      if (!requests.isEmpty()) {
-        IntegrationWorkService.enqueue(requests);
+      List<Integration_Operation__mdt> eligible = new List<Integration_Operation__mdt>();
+      Set<String> keys = new Set<String>();
+      for (Integration_Operation__mdt operation : operations()) {
+        if (operation.Active__c != true || !allowsOutbound(operation.Direction__c)) continue;
+        if (controlsRecordSave(operation.Connector_Key__c) &&
+            operation.Run_On_Record_Save__c != true) continue;
+        eligible.add(operation);
+        keys.add(operation.Connector_Key__c.toLowerCase());
       }
+      if (eligible.isEmpty()) return;
+      // One connector query per dispatch; never cache mutable activation state.
+      Set<String> active = ConnectorConfigService.activeConnectorKeys(keys);
+      if (active.isEmpty()) return;
+      GenericIntegrationRuntime.primeMappingCache(active);
+      List<IntegrationWorkRequest> requests = new List<IntegrationWorkRequest>();
+      for (Integration_Operation__mdt operation : eligible) {
+        if (!active.contains(operation.Connector_Key__c.toLowerCase())) continue;
+        Boolean direct = isSameObject(operation.Salesforce_Object__c, objectApiName);
+        if (!direct && !GenericIntegrationRuntime.hasRecordSaveChildObject(operation, objectApiName)) continue;
+        List<GenericIntegrationRuntime.MappingRule> mappings =
+          GenericIntegrationRuntime.recordSaveMappings(
+            operation, controlsRecordSave(operation.Connector_Key__c)
+          );
+        Set<String> watched = new Set<String>();
+        // Group child fields by parent relationship; one parent's flag governs all its lines.
+        Map<String, Set<String>> watchedByParent = new Map<String, Set<String>>();
+        for (GenericIntegrationRuntime.MappingRule mapping : mappings) {
+          if (!allowsOutbound(mapping.direction)) continue;
+          if (direct && (String.isBlank(mapping.salesforceObject) ||
+              isSameObject(mapping.salesforceObject, objectApiName))) {
+            addWatchedField(watched, mapping.salesforceField);
+          }
+          if (isSameObject(mapping.salesforceObject, objectApiName) &&
+              String.isNotBlank(mapping.parentSalesforceField)) {
+            if (!watchedByParent.containsKey(mapping.parentSalesforceField)) {
+              watchedByParent.put(mapping.parentSalesforceField, new Set<String>());
+            }
+            addWatchedField(watchedByParent.get(mapping.parentSalesforceField), mapping.salesforceField);
+          }
+        }
+        if (direct) {
+          for (SObject recordValue : newRecords) {
+            if (recordValue.Id != null && qualifies(recordValue, oldRecords, eventName, watched)) {
+              requests.add(requestFor(operation.Connector_Key__c, operation.Operation_Key__c,
+                objectApiName, recordValue.Id));
+            }
+          }
+        }
+        for (String parentField : watchedByParent.keySet()) {
+          for (SObject recordValue : newRecords) {
+            if (!qualifies(recordValue, oldRecords, eventName, watchedByParent.get(parentField))) continue;
+            SObject sourceValue = eventName == 'afterDelete' && oldRecords != null
+              ? oldRecords.get(recordValue.Id) : recordValue;
+            Id parentId = sourceValue == null ? null : (Id) sourceValue.get(parentField);
+            if (parentId != null) requests.add(requestFor(operation.Connector_Key__c,
+              operation.Operation_Key__c, operation.Salesforce_Object__c, parentId));
+          }
+        }
+      }
+      if (!requests.isEmpty()) IntegrationWorkService.enqueue(requests);
     } finally {
       dispatching = false;
     }
-  }
-
-  private static List<IntegrationWorkRequest> directRequests(
-    String objectApiName,
-    String eventName,
-    List<SObject> records,
-    Map<Id, SObject> oldRecords
-  ) {
-    List<IntegrationWorkRequest> requests = new List<IntegrationWorkRequest>();
-    List<Integration_Operation__mdt> operations = [
-      SELECT
-        Connector_Key__c,
-        Operation_Key__c,
-        Salesforce_Object__c,
-        Direction__c
-      FROM Integration_Operation__mdt
-      WHERE Active__c = true AND Salesforce_Object__c = :objectApiName
-    ];
-    if (operations.isEmpty()) {
-      return requests;
-    }
-    Map<String, Set<String>> watchedByOperation = watchedFields(operations);
-    for (Integration_Operation__mdt operation : operations) {
-      if (!allowsOutbound(operation.Direction__c)) {
-        continue;
-      }
-      if (!ConnectorConfigService.isActive(operation.Connector_Key__c)) {
-        continue;
-      }
-      String keyValue = operationKey(
-        operation.Connector_Key__c,
-        operation.Operation_Key__c
-      );
-      Set<String> watched = watchedByOperation.get(keyValue);
-      for (SObject recordValue : records) {
-        if (
-          qualifies(recordValue, oldRecords, eventName, watched) &&
-          recordValue.Id != null
-        ) {
-          requests.add(
-            requestFor(
-              operation.Connector_Key__c,
-              operation.Operation_Key__c,
-              objectApiName,
-              recordValue.Id
-            )
-          );
-        }
-      }
-    }
-    return requests;
-  }
-
-  private static List<IntegrationWorkRequest> parentRequests(
-    String objectApiName,
-    String eventName,
-    List<SObject> records,
-    Map<Id, SObject> oldRecords
-  ) {
-    List<IntegrationWorkRequest> requests = new List<IntegrationWorkRequest>();
-    List<Integration_Operation_Mapping__mdt> mappings = [
-      SELECT
-        Connector_Key__c,
-        Operation_Key__c,
-        Salesforce_Object__c,
-        Salesforce_Field__c,
-        Parent_Salesforce_Field__c,
-        Direction__c
-      FROM Integration_Operation_Mapping__mdt
-      WHERE
-        Active__c = true
-        AND Salesforce_Object__c = :objectApiName
-        AND Parent_Salesforce_Field__c != NULL
-    ];
-    if (mappings.isEmpty()) {
-      return requests;
-    }
-    Map<String, Set<String>> watchedByOperation = new Map<String, Set<String>>();
-    Map<String, String> parentFieldByOperation = new Map<String, String>();
-    for (Integration_Operation_Mapping__mdt mapping : mappings) {
-      if (!allowsOutbound(mapping.Direction__c)) {
-        continue;
-      }
-      String keyValue = operationKey(mapping.Connector_Key__c, mapping.Operation_Key__c);
-      if (!watchedByOperation.containsKey(keyValue)) {
-        watchedByOperation.put(keyValue, new Set<String>());
-      }
-      addWatchedField(watchedByOperation.get(keyValue), mapping.Salesforce_Field__c);
-      parentFieldByOperation.put(keyValue, mapping.Parent_Salesforce_Field__c);
-    }
-
-    Set<String> keys = watchedByOperation.keySet();
-    if (keys.isEmpty()) {
-      return requests;
-    }
-    Map<String, Integration_Operation__mdt> operationsByKey =
-      new Map<String, Integration_Operation__mdt>();
-    for (Integration_Operation__mdt operation : [
-      SELECT
-        Connector_Key__c,
-        Operation_Key__c,
-        Salesforce_Object__c,
-        Direction__c
-      FROM Integration_Operation__mdt
-      WHERE Active__c = true
-    ]) {
-      String keyValue = operationKey(operation.Connector_Key__c, operation.Operation_Key__c);
-      if (keys.contains(keyValue) && allowsOutbound(operation.Direction__c)) {
-        operationsByKey.put(keyValue, operation);
-      }
-    }
-
-    for (String keyValue : operationsByKey.keySet()) {
-      Integration_Operation__mdt operation = operationsByKey.get(keyValue);
-      if (!ConnectorConfigService.isActive(operation.Connector_Key__c)) {
-        continue;
-      }
-      String parentField = parentFieldByOperation.get(keyValue);
-      for (SObject recordValue : records) {
-        if (!qualifies(recordValue, oldRecords, eventName, watchedByOperation.get(keyValue))) {
-          continue;
-        }
-        SObject sourceValue = recordValue;
-        if (eventName == 'afterDelete' && oldRecords != null) {
-          sourceValue = oldRecords.get(recordValue.Id);
-        }
-        Id parentId = sourceValue == null ? null : (Id) sourceValue.get(parentField);
-        if (parentId != null) {
-          requests.add(
-            requestFor(
-              operation.Connector_Key__c,
-              operation.Operation_Key__c,
-              operation.Salesforce_Object__c,
-              parentId
-            )
-          );
-        }
-      }
-    }
-    return requests;
-  }
-
-  private static Map<String, Set<String>> watchedFields(
-    List<Integration_Operation__mdt> operations
-  ) {
-    Set<String> connectors = new Set<String>();
-    Set<String> operationKeys = new Set<String>();
-    Map<String, Set<String>> watched = new Map<String, Set<String>>();
-    for (Integration_Operation__mdt operation : operations) {
-      connectors.add(operation.Connector_Key__c);
-      operationKeys.add(operation.Operation_Key__c);
-      watched.put(
-        operationKey(operation.Connector_Key__c, operation.Operation_Key__c),
-        new Set<String>()
-      );
-    }
-    for (Integration_Operation_Mapping__mdt mapping : [
-      SELECT Connector_Key__c, Operation_Key__c, Salesforce_Field__c, Direction__c
-      FROM Integration_Operation_Mapping__mdt
-      WHERE
-        Active__c = true
-        AND Connector_Key__c IN :connectors
-        AND Operation_Key__c IN :operationKeys
-    ]) {
-      String keyValue = operationKey(mapping.Connector_Key__c, mapping.Operation_Key__c);
-      if (watched.containsKey(keyValue) && allowsOutbound(mapping.Direction__c)) {
-        addWatchedField(watched.get(keyValue), mapping.Salesforce_Field__c);
-      }
-    }
-    return watched;
   }
 
   @TestVisible
@@ -222,7 +114,11 @@ public without sharing class IntegrationEventApi {
     if (oldRecord == null || watchedFields == null || watchedFields.isEmpty()) {
       return oldRecord == null;
     }
+    Map<String, Schema.SObjectField> sObjectFields = newRecord.getSObjectType().getDescribe().fields.getMap();
     for (String fieldName : watchedFields) {
+      if (!sObjectFields.containsKey(fieldName.toLowerCase())) {
+        continue;
+      }
       if (newRecord.get(fieldName) != oldRecord.get(fieldName)) {
         return true;
       }
@@ -274,8 +170,15 @@ public without sharing class IntegrationEventApi {
     }
   }
 
+  private static Boolean isSameObject(String left, String right) {
+    if (String.isBlank(left) && String.isBlank(right)) return true;
+    if (String.isBlank(left) || String.isBlank(right)) return false;
+    return left.toLowerCase().replace('quickbridgetlg__', '') ==
+           right.toLowerCase().replace('quickbridgetlg__', '');
+  }
+
   private static Boolean allowsOutbound(String direction) {
-    String normalized = String.isBlank(direction) ? '' : direction.toLowerCase();
+    String normalized = String.isBlank(direction) ? '' : direction.trim().toLowerCase();
     return normalized == 'outbound' ||
       normalized == 'bidirectional' ||
       normalized == 'both';

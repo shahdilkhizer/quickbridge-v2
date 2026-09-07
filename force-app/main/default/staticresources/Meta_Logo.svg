@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="120" viewBox="0 0 360 120" role="img" aria-labelledby="title desc">
+  <title id="title">Meta</title>
+  <desc id="desc">Meta connector logo for Facebook and Instagram integrations.</desc>
+  <rect width="360" height="120" rx="18" fill="#ffffff"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="10">
+    <path d="M58 76 C76 34 95 34 118 76 C142 118 164 118 184 76 C202 36 224 36 242 76" stroke="#0866ff"/>
+    <path d="M58 76 C76 118 98 118 118 76 C136 36 164 36 184 76 C204 118 224 118 242 76" stroke="#00a6ff" opacity="0.9"/>
+  </g>
+  <text x="264" y="77" fill="#1c2b33" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="700">Meta</text>
+</svg>

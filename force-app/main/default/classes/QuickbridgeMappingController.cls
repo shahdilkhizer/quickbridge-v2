@@ -6,10 +6,11 @@ public with sharing class QuickbridgeMappingController {
   };
   private static final Pattern SAFE_TOKEN = Pattern.compile('^[A-Za-z][A-Za-z0-9_]{0,119}$');
   private static final Pattern SAFE_EXTERNAL_PATH = Pattern.compile(
-    '^[A-Za-z_$][A-Za-z0-9_$-]*(?:\\[[0-9]+\\])?(?:\\.[A-Za-z_$][A-Za-z0-9_$-]*(?:\\[[0-9]+\\])?)*$'
+    '^[A-Za-z_$][A-Za-z0-9_$-]*(?:\\[[0-9]*\\])?(?:\\.[A-Za-z_$][A-Za-z0-9_$-]*(?:\\[[0-9]*\\])?)*$'
   );
 
   @TestVisible private static Boolean bypassSecurityForTests = false;
+  @TestVisible private static Metadata.DeployContainer lastSaveContainer;
 
   public class MappingWorkspace {
     @AuraEnabled public String connectorKey;
@@ -19,6 +20,8 @@ public with sharing class QuickbridgeMappingController {
 
   public class OperationWorkspace {
     @AuraEnabled public String workspaceKey;
+    @AuraEnabled public Boolean runOnRecordSave;
+    @AuraEnabled public Boolean supportsRunOnRecordSave;
     @AuraEnabled public String operationKey;
     @AuraEnabled public String label;
     @AuraEnabled public String direction;
@@ -28,6 +31,10 @@ public with sharing class QuickbridgeMappingController {
     @AuraEnabled public List<SelectOption> salesforceFields = new List<SelectOption>();
     @AuraEnabled public List<SelectOption> externalFields = new List<SelectOption>();
     @AuraEnabled public List<MappingRow> mappings = new List<MappingRow>();
+    @AuraEnabled public Boolean hasLineItems = false;
+    @AuraEnabled public String childObjectLabel;
+    @AuraEnabled public String collectionPath;
+    @AuraEnabled public List<SelectOption> lineFields = new List<SelectOption>();
   }
 
   public class SelectOption implements Comparable {
@@ -53,6 +60,9 @@ public with sharing class QuickbridgeMappingController {
     @AuraEnabled public Boolean active;
     @AuraEnabled public Boolean required;
     @AuraEnabled public String source;
+    @AuraEnabled public Boolean isLine = false;
+    @AuraEnabled public String salesforceObject;
+    @AuraEnabled public String collectionPath;
   }
 
   public class MappingInput {
@@ -60,6 +70,8 @@ public with sharing class QuickbridgeMappingController {
     public String externalPath;
     public String direction;
     public Boolean active;
+    public Boolean isLine;
+    public String salesforceObject;
   }
 
   public class SaveRequest {
@@ -69,6 +81,7 @@ public with sharing class QuickbridgeMappingController {
     public String salesforceObject;
     public String externalObject;
     public List<MappingInput> rows;
+    public Boolean runOnRecordSave;
   }
 
   public class SaveResponse {
@@ -90,7 +103,7 @@ public with sharing class QuickbridgeMappingController {
     String normalizedConnector = normalize(connector.Connector_Key__c);
     List<Integration_Operation__mdt> operationDefinitions = [
       SELECT DeveloperName, MasterLabel, Connector_Key__c, Operation_Key__c,
-        Direction__c, Salesforce_Object__c, External_Entity__c, Active__c
+        Direction__c, Salesforce_Object__c, External_Entity__c, Active__c, Run_On_Record_Save__c
       FROM Integration_Operation__mdt
       WHERE Connector_Key__c = :normalizedConnector AND Active__c = true
       ORDER BY MasterLabel, Direction__c
@@ -105,7 +118,7 @@ public with sharing class QuickbridgeMappingController {
       ? new List<Integration_Operation_Mapping__mdt>()
       : [
         SELECT Operation_Key__c, Direction__c, Salesforce_Object__c,
-          Salesforce_Field__c, External_Path__c, Required__c, Sort_Order__c
+          Salesforce_Field__c, External_Path__c, Required__c, Sort_Order__c, Collection_Path__c
         FROM Integration_Operation_Mapping__mdt
         WHERE Connector_Key__c = :normalizedConnector
           AND Operation_Key__c IN :operationKeys
@@ -141,9 +154,14 @@ public with sharing class QuickbridgeMappingController {
       item.label = operation.MasterLabel;
       item.direction = normalizeDirection(operation.Direction__c);
       item.workspaceKey = item.operationKey + '|' + item.direction;
+      item.supportsRunOnRecordSave = IntegrationEventApi.supportsRecordSave(normalizedConnector, item.direction);
+      item.runOnRecordSave = item.supportsRunOnRecordSave && operation.Run_On_Record_Save__c == true;
       item.salesforceObject = stripNamespace(operation.Salesforce_Object__c);
       item.externalObject = operation.External_Entity__c;
-      populateSalesforceFields(item);
+      populateSalesforceFields(
+        item,
+        defaultsByOperation.get(operation.Operation_Key__c)
+      );
       populateMappings(
         item,
         defaultsByOperation.get(operation.Operation_Key__c),
@@ -158,34 +176,99 @@ public with sharing class QuickbridgeMappingController {
   public static SaveResponse saveMappings(String requestJson) {
     assertAdminAccess();
     SaveRequest request = parseRequest(requestJson);
+    if (request.runOnRecordSave != null && String.isBlank(request.operationDirection)) {
+      throw handled('Select an operation direction before changing record-save synchronization.');
+    }
     Integration_Operation__mdt operation = requireOperation(
       request.connectorKey,
       request.operationKey,
       request.operationDirection
     );
     validateOperationIdentity(request, operation);
+    if (request.runOnRecordSave != null) {
+      QuickbridgeAdminSecurity.requireManage();
+      if (!IntegrationEventApi.supportsRecordSave(operation.Connector_Key__c, operation.Direction__c)) {
+        throw handled('Run sync on record save requires a supported outbound operation.');
+      }
+    }
     Schema.SObjectType objectType = requireObject(request.salesforceObject);
-    Map<String, Schema.SObjectField> fields = objectType.getDescribe().fields.getMap();
-    if (request.rows == null || request.rows.isEmpty() || request.rows.size() > 200) {
-      throw handled('Submit between 1 and 200 mapping rows.');
+    Map<String, Map<String, Schema.SObjectField>> fieldsByObject = new Map<String, Map<String, Schema.SObjectField>>();
+    Map<String, Schema.SObjectField> parentFields = objectType.getDescribe().fields.getMap();
+    fieldsByObject.put(stripNamespace(request.salesforceObject).toLowerCase(), parentFields);
+
+    Map<String, Schema.SObjectField> fields = new Map<String, Schema.SObjectField>(parentFields);
+    Map<String, String> fieldToObjectMap = new Map<String, String>();
+    for (String fieldName : parentFields.keySet()) {
+      fieldToObjectMap.put(fieldName.toLowerCase(), stripNamespace(request.salesforceObject));
+    }
+    List<Integration_Operation_Mapping__mdt> opDefaults = [
+      SELECT Salesforce_Object__c
+      FROM Integration_Operation_Mapping__mdt
+      WHERE
+        Connector_Key__c = :operation.Connector_Key__c
+        AND Operation_Key__c = :operation.Operation_Key__c
+        AND Active__c = true
+    ];
+    for (Integration_Operation_Mapping__mdt defRow : opDefaults) {
+      if (
+        String.isNotBlank(defRow.Salesforce_Object__c) &&
+        !same(defRow.Salesforce_Object__c, request.salesforceObject)
+      ) {
+        Schema.SObjectType childType = ConnectorExecutionRequest.resolveSObjectType(
+          defRow.Salesforce_Object__c
+        );
+        if (childType != null && childType.getDescribe().isAccessible()) {
+          Map<String, Schema.SObjectField> childFields = childType.getDescribe().fields.getMap();
+          fieldsByObject.put(stripNamespace(defRow.Salesforce_Object__c).toLowerCase(), childFields);
+          for (String childFieldName : childFields.keySet()) {
+            if (!fields.containsKey(childFieldName)) {
+              fields.put(childFieldName, childFields.get(childFieldName));
+            }
+            if (!fieldToObjectMap.containsKey(childFieldName.toLowerCase())) {
+              fieldToObjectMap.put(childFieldName.toLowerCase(), stripNamespace(defRow.Salesforce_Object__c));
+            }
+          }
+        }
+      }
+    }
+    if (request.rows == null) request.rows = new List<MappingInput>();
+    if (request.rows.size() > 200 || (request.rows.isEmpty() && request.runOnRecordSave == null)) {
+      throw handled('Submit between 1 and 200 mapping rows or a record-save setting.');
     }
 
     Metadata.DeployContainer container = new Metadata.DeployContainer();
     Set<String> identities = new Set<String>();
     Integer submitted = 0;
     for (MappingInput row : request.rows) {
-      validateRow(row, fields, request.salesforceObject);
+      String targetObj = (row.isLine == true && String.isNotBlank(row.salesforceObject))
+        ? row.salesforceObject
+        : request.salesforceObject;
+      Map<String, Schema.SObjectField> targetFields = fieldsByObject.get(stripNamespace(targetObj).toLowerCase());
+      if (targetFields == null) {
+        targetFields = fields;
+      }
+      validateRow(row, targetFields, targetObj);
       String identity = mappingIdentity(request, row);
       if (!identities.add(identity)) {
         throw handled('Duplicate mapping rows are not allowed.');
       }
-      container.addMetadata(toMetadata(request, row, identity));
+      container.addMetadata(toMetadata(request, row, identity, fieldToObjectMap));
       submitted++;
     }
 
+    if (request.runOnRecordSave != null) {
+      Metadata.CustomMetadata setting = new Metadata.CustomMetadata();
+      setting.fullName = 'Integration_Operation__mdt.' + operation.DeveloperName;
+      setting.label = operation.MasterLabel;
+      // A partial metadata update preserves endpoint, direction, and all other operation values.
+      addValue(setting, 'Run_On_Record_Save__c', request.runOnRecordSave);
+      container.addMetadata(setting);
+      submitted++;
+    }
     SaveResponse response = new SaveResponse();
     response.submittedCount = submitted;
     if (Test.isRunningTest()) {
+      lastSaveContainer = container;
       response.deploymentId = 'TEST-MAPPING-DEPLOYMENT';
       response.status = 'Succeeded';
       return response;
@@ -275,6 +358,15 @@ public with sharing class QuickbridgeMappingController {
     }
     Object cached = getCachedDeploymentStatus(deploymentId);
     response.status = cached == null ? 'Unknown' : String.valueOf(cached);
+    if (response.status != 'Succeeded' && response.status != 'Failed') {
+      // Cache is optional and can expire; the callback also records a durable outcome.
+      List<Quickbridge_Admin_Audit__c> outcomes = [
+        SELECT Status__c FROM Quickbridge_Admin_Audit__c
+        WHERE Action__c = 'MAPPING_DEPLOYMENT' AND Related_Record_Id__c = :deploymentId
+        WITH SECURITY_ENFORCED ORDER BY CreatedDate DESC LIMIT 1
+      ];
+      if (!outcomes.isEmpty()) response.status = outcomes[0].Status__c;
+    }
     response.message = response.status == 'Failed'
       ? 'The mapping metadata deployment failed. Review the sanitized error log.'
       : 'Mapping metadata deployment is ' + response.status.toLowerCase() + '.';
@@ -292,6 +384,7 @@ public with sharing class QuickbridgeMappingController {
         : 'Failed';
       if (String.isNotBlank(deploymentId)) {
         cacheDeploymentStatus(deploymentId, status);
+        QuickbridgeAdminSecurity.audit('MAPPING_DEPLOYMENT', null, status, null, result.id);
       }
       if (status == 'Failed') {
         logDeploymentFailure(deploymentId, result);
@@ -316,7 +409,10 @@ public with sharing class QuickbridgeMappingController {
     }
   }
 
-  private static void populateSalesforceFields(OperationWorkspace item) {
+  private static void populateSalesforceFields(
+    OperationWorkspace item,
+    List<Integration_Operation_Mapping__mdt> defaults
+  ) {
     Schema.SObjectType objectType = requireObject(item.salesforceObject);
     Schema.DescribeSObjectResult describeResult = objectType.getDescribe();
     if (!describeResult.isAccessible()) {
@@ -337,6 +433,45 @@ public with sharing class QuickbridgeMappingController {
       }
     }
     item.salesforceFields.sort();
+
+    Set<String> childObjects = new Set<String>();
+    if (defaults != null) {
+      for (Integration_Operation_Mapping__mdt defRow : defaults) {
+        if (
+          String.isNotBlank(defRow.Salesforce_Object__c) &&
+          !same(defRow.Salesforce_Object__c, item.salesforceObject)
+        ) {
+          childObjects.add(stripNamespace(defRow.Salesforce_Object__c));
+          if (String.isNotBlank(defRow.Collection_Path__c) && String.isBlank(item.collectionPath)) {
+            item.collectionPath = defRow.Collection_Path__c;
+          }
+        }
+      }
+    }
+    for (String childObjectName : childObjects) {
+      Schema.SObjectType childType = ConnectorExecutionRequest.resolveSObjectType(childObjectName);
+      if (childType != null && childType.getDescribe().isAccessible()) {
+        Schema.DescribeSObjectResult childDescribe = childType.getDescribe();
+        item.hasLineItems = true;
+        if (String.isBlank(item.childObjectLabel)) {
+          item.childObjectLabel = childDescribe.getLabel();
+        }
+        for (Schema.SObjectField fieldToken : childDescribe.fields.getMap().values()) {
+          Schema.DescribeFieldResult field = fieldToken.getDescribe();
+          if (
+            field.isAccessible() &&
+            !field.isCalculated() &&
+            field.getType() != Schema.DisplayType.Address &&
+            field.getType() != Schema.DisplayType.Location
+          ) {
+            item.lineFields.add(
+              new SelectOption(field.getLabel() + ' (' + field.getName() + ')', field.getName())
+            );
+          }
+        }
+      }
+    }
+    item.lineFields.sort();
   }
 
   private static void populateMappings(
@@ -346,9 +481,16 @@ public with sharing class QuickbridgeMappingController {
   ) {
     Map<String, MappingRow> byKey = new Map<String, MappingRow>();
     Set<String> externalPaths = new Set<String>();
+    Set<String> childObjects = new Set<String>();
     if (defaults != null) {
       for (Integration_Operation_Mapping__mdt row : defaults) {
-        if (!same(row.Salesforce_Object__c, item.salesforceObject)) continue;
+        Boolean isChild = !same(row.Salesforce_Object__c, item.salesforceObject);
+        if (isChild) {
+          if (String.isBlank(row.Collection_Path__c)) {
+            continue;
+          }
+          childObjects.add(normalize(stripNamespace(row.Salesforce_Object__c)));
+        }
         MappingRow mapping = new MappingRow();
         mapping.salesforceField = stripNamespace(row.Salesforce_Field__c);
         mapping.externalPath = row.External_Path__c;
@@ -356,12 +498,27 @@ public with sharing class QuickbridgeMappingController {
         mapping.active = true;
         mapping.required = row.Required__c == true;
         mapping.source = 'Default';
-        byKey.put(rowKey(mapping.salesforceField, mapping.direction), mapping);
+        if (isChild) {
+          mapping.isLine = true;
+          mapping.salesforceObject = stripNamespace(row.Salesforce_Object__c);
+          mapping.collectionPath = row.Collection_Path__c;
+          item.hasLineItems = true;
+        } else {
+          mapping.isLine = false;
+          mapping.salesforceObject = stripNamespace(item.salesforceObject);
+        }
+        byKey.put(rowKey(mapping.salesforceObject, mapping.salesforceField, mapping.direction), mapping);
         if (String.isNotBlank(mapping.externalPath)) externalPaths.add(mapping.externalPath);
       }
     }
     for (Field_Mapping__mdt row : overrides) {
-      if (!same(row.SF_Object__c, item.salesforceObject)) continue;
+      Boolean isChild = !same(row.SF_Object__c, item.salesforceObject);
+      if (
+        isChild &&
+        !childObjects.contains(normalize(stripNamespace(row.SF_Object__c)))
+      ) {
+        continue;
+      }
       if (
         String.isNotBlank(row.Action__c) &&
         !same(row.Action__c, item.operationKey) &&
@@ -379,8 +536,17 @@ public with sharing class QuickbridgeMappingController {
       mapping.active = row.Is_Active__c == true;
       mapping.required = false;
       mapping.source = 'Override';
+      if (isChild) {
+        mapping.isLine = true;
+        mapping.salesforceObject = stripNamespace(row.SF_Object__c);
+        mapping.collectionPath = item.collectionPath;
+        item.hasLineItems = true;
+      } else {
+        mapping.isLine = false;
+        mapping.salesforceObject = stripNamespace(item.salesforceObject);
+      }
       if (mapping.active) {
-        byKey.put(rowKey(mapping.salesforceField, mapping.direction), mapping);
+        byKey.put(rowKey(mapping.salesforceObject, mapping.salesforceField, mapping.direction), mapping);
       }
       if (String.isNotBlank(mapping.externalPath)) externalPaths.add(mapping.externalPath);
     }
@@ -433,7 +599,11 @@ public with sharing class QuickbridgeMappingController {
       throw handled('A selected Salesforce field is invalid.');
     }
     Schema.DescribeFieldResult field = fields.get(fieldName).getDescribe();
-    if (!field.isAccessible() || (!field.isCreateable() && !field.isUpdateable())) {
+    if (!field.isAccessible()) {
+      throw handled('The selected Salesforce field is not accessible: ' + objectName + '.' + fieldName);
+    }
+    String direction = normalizeDirection(row.direction);
+    if (direction != 'Outbound' && !field.isCreateable() && !field.isUpdateable()) {
       throw handled('The selected Salesforce field is not editable: ' + objectName + '.' + fieldName);
     }
     if (
@@ -448,17 +618,24 @@ public with sharing class QuickbridgeMappingController {
   private static Metadata.CustomMetadata toMetadata(
     SaveRequest request,
     MappingInput row,
-    String identity
+    String identity,
+    Map<String, String> fieldToObjectMap
   ) {
     Metadata.CustomMetadata record = new Metadata.CustomMetadata();
     record.fullName = 'Field_Mapping__mdt.QB_' + digest(identity);
     record.label = (
       request.connectorKey + ' ' + request.operationKey + ' ' + row.salesforceField
     ).left(80);
+    String sfFieldName = stripNamespace(row.salesforceField);
+    String sfObjectName = (row.isLine == true && String.isNotBlank(row.salesforceObject))
+      ? stripNamespace(row.salesforceObject)
+      : ((fieldToObjectMap != null && fieldToObjectMap.containsKey(sfFieldName.toLowerCase()))
+          ? fieldToObjectMap.get(sfFieldName.toLowerCase())
+          : stripNamespace(request.salesforceObject));
     addValue(record, 'Integration__c', request.connectorKey);
     addValue(record, 'Action__c', request.operationKey);
-    addValue(record, 'SF_Object__c', stripNamespace(request.salesforceObject));
-    addValue(record, 'SF_Field__c', stripNamespace(row.salesforceField));
+    addValue(record, 'SF_Object__c', sfObjectName);
+    addValue(record, 'SF_Field__c', sfFieldName);
     addValue(record, 'External_Field__c', row.externalPath);
     addValue(record, 'Sync_Direction__c', normalizeDirection(row.direction));
     addValue(record, 'Is_Active__c', row.active != false);
@@ -478,11 +655,14 @@ public with sharing class QuickbridgeMappingController {
   }
 
   private static String mappingIdentity(SaveRequest request, MappingInput row) {
+    String sfObjectName = (row.isLine == true && String.isNotBlank(row.salesforceObject))
+      ? stripNamespace(row.salesforceObject)
+      : stripNamespace(request.salesforceObject);
     return String.join(
       new List<String>{
         normalize(request.connectorKey),
         normalize(request.operationKey),
-        normalize(stripNamespace(request.salesforceObject)),
+        normalize(sfObjectName),
         normalize(stripNamespace(row.salesforceField)),
         normalize(row.externalPath),
         normalizeDirection(row.direction).toLowerCase()
@@ -528,8 +708,8 @@ public with sharing class QuickbridgeMappingController {
       !SAFE_TOKEN.matcher(operationKey).matches()
     ) throw handled('Unsupported mapping operation.');
     List<Integration_Operation__mdt> rows = [
-      SELECT Connector_Key__c, Operation_Key__c, Salesforce_Object__c,
-        External_Entity__c, Direction__c
+      SELECT DeveloperName, MasterLabel, Connector_Key__c, Operation_Key__c, Salesforce_Object__c,
+        External_Entity__c, Direction__c, Run_On_Record_Save__c
       FROM Integration_Operation__mdt
       WHERE Connector_Key__c = :keyValue
         AND Operation_Key__c = :operationKey
@@ -608,8 +788,8 @@ public with sharing class QuickbridgeMappingController {
     return normalize(stripNamespace(left)) == normalize(stripNamespace(right));
   }
 
-  private static String rowKey(String fieldName, String direction) {
-    return normalize(fieldName) + ':' + normalizeDirection(direction).toLowerCase();
+  private static String rowKey(String objectName, String fieldName, String direction) {
+    return normalize(stripNamespace(objectName)) + ':' + normalize(fieldName) + ':' + normalizeDirection(direction).toLowerCase();
   }
 
   private static String normalize(String value) {

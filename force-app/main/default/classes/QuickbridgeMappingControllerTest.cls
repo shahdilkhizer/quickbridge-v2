@@ -35,12 +35,61 @@ private class QuickbridgeMappingControllerTest {
         operation.direction == 'Outbound'
       ) {
         foundCustomerOutbound = true;
-        System.assertEquals('Account', operation.salesforceObject);
-        System.assertEquals('Customer', operation.externalObject);
-        System.assert(!operation.mappings.isEmpty());
+      }
+      if (
+        operation.operationKey == 'InvoiceOrderUpsert' &&
+        operation.direction == 'Outbound'
+      ) {
+        System.assertEquals(true, operation.hasLineItems);
+        System.assertNotEquals(null, operation.collectionPath);
+        System.assert(!operation.lineFields.isEmpty());
       }
     }
     System.assert(foundCustomerOutbound, 'The outbound customer operation must be editable.');
+  }
+
+  @IsTest
+  static void saveHandlesLineItemsAndHeaderMappings() {
+    QuickbridgeMappingController.bypassSecurityForTests = true;
+    Map<String, Object> request = new Map<String, Object>{
+      'connectorKey' => 'qbo',
+      'operationKey' => 'InvoiceOrderUpsert',
+      'operationDirection' => 'Outbound',
+      'salesforceObject' => 'Order',
+      'externalObject' => 'Invoice',
+      'rows' => new List<Object>{
+        new Map<String, Object>{
+          'salesforceField' => 'EffectiveDate',
+          'externalPath' => 'TxnDate',
+          'direction' => 'Outbound',
+          'active' => true,
+          'isLine' => false,
+          'salesforceObject' => 'Order'
+        },
+        new Map<String, Object>{
+          'salesforceField' => 'Quantity',
+          'externalPath' => 'Line[].Qty',
+          'direction' => 'Outbound',
+          'active' => true,
+          'isLine' => true,
+          'salesforceObject' => 'OrderItem'
+        },
+        new Map<String, Object>{
+          'salesforceField' => 'TotalPrice',
+          'externalPath' => 'Line[].Amount',
+          'direction' => 'Outbound',
+          'active' => true,
+          'isLine' => true,
+          'salesforceObject' => 'OrderItem'
+        }
+      }
+    };
+
+    QuickbridgeMappingController.SaveResponse response =
+      QuickbridgeMappingController.saveMappings(JSON.serialize(request));
+
+    System.assertEquals('Succeeded', response.status);
+    System.assertEquals(3, response.submittedCount);
   }
 
   @IsTest

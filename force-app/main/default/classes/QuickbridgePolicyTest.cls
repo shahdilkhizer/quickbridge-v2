@@ -193,6 +193,15 @@ private class QuickbridgePolicyTest {
 
   @IsTest
   static void eventApiOnlyQueuesWatchedFieldChanges() {
+    // Opt in explicitly; deployed operations default to record-save sync disabled.
+    IntegrationEventApi.testOperations = [
+      SELECT Connector_Key__c, Operation_Key__c, Salesforce_Object__c, Direction__c,
+        External_Entity__c, Salesforce_External_Id_Field__c, Active__c, Run_On_Record_Save__c
+      FROM Integration_Operation__mdt WHERE Active__c = true
+    ];
+    for (Integration_Operation__mdt operation : IntegrationEventApi.testOperations) {
+      operation.Run_On_Record_Save__c = true;
+    }
     insert new Connector_Instance__c(
       Name = 'QBO Event Policy',
       Connector_Key__c = 'qbo',
