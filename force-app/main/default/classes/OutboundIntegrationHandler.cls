@@ -32,9 +32,15 @@ public without sharing class OutboundIntegrationHandler
           );
         }
       }
+      Map<String, Object> bindVariables = new Map<String, Object>{
+        'recordIds' => request.recordIds,
+        'sinceValue' => request.sinceValue != null
+          ? request.sinceValue
+          : System.now().addDays(-30)
+      };
       return Database.getQueryLocatorWithBinds(
         GenericIntegrationRuntime.buildSourceQuery(definition, request),
-        new Map<String, Object>{ 'recordIds' => request.recordIds },
+        bindVariables,
         AccessLevel.SYSTEM_MODE
       );
     } catch (Exception exceptionValue) {

@@ -26,7 +26,7 @@ public without sharing class IntegrationScheduleDispatcher {
         Next_Run_At__c
       FROM Scheduled_Integration_Job__c
       WHERE
-        (Status__c IN ('Ready', 'Active')
+        (Status__c IN ('Ready', 'Active', 'Failed')
         AND (Next_Run_At__c = NULL OR Next_Run_At__c <= :nowValue))
         OR (Status__c IN ('Claimed', 'Running')
         AND Lease_Expires_At__c < :nowValue)
@@ -136,6 +136,11 @@ public without sharing class IntegrationScheduleDispatcher {
     } else {
       job.Status__c = 'Failed';
       job.Last_Error__c = safeError(errorMessage);
+      job.Next_Run_At__c = calculateNextRun(
+        job.Frequency_Value__c,
+        job.Frequency_Type__c,
+        nowValue
+      );
       ConnectorConfigService.updateHealth(
         normalizeConnector(job.Integration_Type__c),
         'Unavailable'

@@ -20,7 +20,7 @@
     </values>
     <values>
         <field>Direction__c</field>
-        <value xsi:type="xsd:string">Outbound</value>
+        <value xsi:type="xsd:string">Both</value>
     </values>
     <values>
         <field>External_Path__c</field>

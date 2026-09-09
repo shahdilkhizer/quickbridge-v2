@@ -73,6 +73,7 @@ public inherited sharing class GenericIntegrationRuntime {
     public Integer inboundMaxAgeSeconds { get; set; }
     public String inboundIdempotencyPath { get; set; }
     public String salesforceExternalIdField { get; set; }
+    public String resourceContractJson { get; set; }
     public List<MappingRule> mappings { get; set; }
 
     public OperationDefinition() {
@@ -377,10 +378,19 @@ public inherited sharing class GenericIntegrationRuntime {
       ) {
         continue;
       }
-      selected.add(resolveFieldName(fields, mapping.salesforceField));
+      if (String.isNotBlank(mapping.salesforceField)) {
+        if (mapping.salesforceField.contains('.')) {
+          selected.add(mapping.salesforceField);
+        } else {
+          selected.add(resolveFieldName(fields, mapping.salesforceField));
+        }
+      }
     }
     if (String.isNotBlank(definition.salesforceExternalIdField)) {
       selected.add(resolveFieldName(fields, definition.salesforceExternalIdField));
+    }
+    if (fields.containsKey('lastmodifieddate')) {
+      selected.add(resolveFieldName(fields, 'LastModifiedDate'));
     }
     List<String> orderedFields = new List<String>(selected);
     orderedFields.sort();
@@ -389,12 +399,25 @@ public inherited sharing class GenericIntegrationRuntime {
       String.join(orderedFields, ',') +
       ' FROM ' +
       objectType.getDescribe().getName();
-    if (request.recordIds == null || request.recordIds.isEmpty()) {
-      throw new GenericIntegrationRuntimeException(
-        'Generic outbound execution requires explicit record IDs during the additive validation phase.'
-      );
+    if (request.recordIds != null && !request.recordIds.isEmpty()) {
+      return query + ' WHERE Id IN :recordIds ORDER BY Id';
     }
-    return query + ' WHERE Id IN :recordIds ORDER BY Id';
+    if (request.scheduleId != null) {
+      String externalField = String.isNotBlank(definition.salesforceExternalIdField)
+        ? resolveFieldName(fields, definition.salesforceExternalIdField)
+        : null;
+      String filter = '';
+      if (fields.containsKey('qbo_customer_id__c')) {
+        filter = 'QBO_Customer_ID__c != NULL AND ';
+      }
+      if (String.isNotBlank(externalField)) {
+        return query + ' WHERE ' + filter + '(' + externalField + ' = NULL OR LastModifiedDate >= :sinceValue) ORDER BY LastModifiedDate DESC';
+      }
+      return query + ' WHERE ' + filter + 'LastModifiedDate >= :sinceValue ORDER BY LastModifiedDate DESC';
+    }
+    throw new GenericIntegrationRuntimeException(
+      'Generic outbound execution requires explicit record IDs during the additive validation phase.'
+    );
   }
 
   private class ChildCollectionGroup {
@@ -407,11 +430,23 @@ public inherited sharing class GenericIntegrationRuntime {
   private static List<ChildCollectionGroup> resolveChildCollectionGroups(
     OperationDefinition definition
   ) {
+    return resolveChildCollectionGroups(definition, 'Outbound');
+  }
+
+  private static List<ChildCollectionGroup> resolveChildCollectionGroups(
+    OperationDefinition definition,
+    String direction
+  ) {
     List<ChildCollectionGroup> groups = new List<ChildCollectionGroup>();
     Map<String, ChildCollectionGroup> groupsByKey = new Map<String, ChildCollectionGroup>();
+    String targetDir = normalize(direction);
     for (MappingRule mapping : definition.mappings) {
+      String mDir = normalize(mapping.direction);
+      Boolean dirMatches = (targetDir == 'outbound')
+        ? (mDir == 'outbound' || mDir == 'both')
+        : (mDir == 'inbound' || mDir == 'both');
       if (
-        !isOutboundMapping(mapping) ||
+        !dirMatches ||
         String.isBlank(mapping.collectionPath) ||
         String.isBlank(mapping.parentSalesforceField) ||
         String.isBlank(mapping.salesforceObject) ||
@@ -462,7 +497,7 @@ public inherited sharing class GenericIntegrationRuntime {
         if (String.isNotBlank(rule.salesforceField)) {
           if (rule.salesforceField.contains('.')) {
             selectFields.add(rule.salesforceField);
-          } else if (childFields.containsKey(rule.salesforceField)) {
+          } else {
             selectFields.add(resolveFieldName(childFields, rule.salesforceField));
           }
         }
@@ -638,6 +673,7 @@ public inherited sharing class GenericIntegrationRuntime {
       return result;
     }
     Map<String, List<SObject>> recordsByObject = new Map<String, List<SObject>>();
+    Map<String, List<Map<String, Object>>> rawRowsByObject = new Map<String, List<Map<String, Object>>>();
     Map<String, Schema.SObjectField> externalFields = new Map<String, Schema.SObjectField>();
 
     for (Object rowValue : rows) {
@@ -683,7 +719,7 @@ public inherited sharing class GenericIntegrationRuntime {
             continue;
           }
         }
-        target.put(fieldName, value);
+        putCoerced(target, fieldName, value, fields);
         if (mapping.isExternalId == true) {
           externalFields.put(objectName, fields.get(fieldName));
         }
@@ -704,12 +740,17 @@ public inherited sharing class GenericIntegrationRuntime {
       }
       if (!recordsByObject.containsKey(objectName)) {
         recordsByObject.put(objectName, new List<SObject>());
+        rawRowsByObject.put(objectName, new List<Map<String, Object>>());
       }
       recordsByObject.get(objectName).add(target);
+      rawRowsByObject.get(objectName).add(row);
     }
 
     for (String objectName : recordsByObject.keySet()) {
       List<SObject> records = recordsByObject.get(objectName);
+      List<Map<String, Object>> rawRows = rawRowsByObject.get(objectName);
+      prepareInboundParentRecords(definition, rawRows, records);
+
       SObjectAccessDecision decision = Security.stripInaccessible(
         AccessType.UPSERTABLE,
         records
@@ -719,16 +760,789 @@ public inherited sharing class GenericIntegrationRuntime {
       if (externalField == null) {
         Database.SaveResult[] saveResults = Database.insert(safeRecords, false);
         addSaveResults(result, saveResults);
+        for (Integer i = 0; i < saveResults.size(); i++) {
+          if (saveResults[i].isSuccess()) {
+            safeRecords[i].Id = saveResults[i].getId();
+          }
+        }
       } else {
         Database.UpsertResult[] upsertResults = Database.upsert(
           safeRecords,
           externalField,
           false
         );
-        addUpsertResults(result, upsertResults);
+        for (Integer i = 0; i < upsertResults.size(); i++) {
+          if (upsertResults[i].isSuccess()) {
+            safeRecords[i].Id = upsertResults[i].getId();
+          }
+        }
+        List<SObject> retryRecords = new List<SObject>();
+        List<Integer> retryIndices = new List<Integer>();
+        for (Integer i = 0; i < upsertResults.size(); i++) {
+          Database.UpsertResult ur = upsertResults[i];
+          if (!ur.isSuccess()) {
+            Boolean hasAddressError = false;
+            for (Database.Error err : ur.getErrors()) {
+              String msg = err.getMessage();
+              if (msg.contains('country/territory') || msg.contains('Billing State') || msg.contains('Shipping State') || msg.contains('valid countries') || msg.contains('valid states')) {
+                hasAddressError = true;
+                break;
+              }
+            }
+            if (hasAddressError) {
+              SObject cleaned = safeRecords[i].clone(true, true, true, true);
+              Map<String, Schema.SObjectField> objFields = cleaned.getSObjectType().getDescribe().fields.getMap();
+              if (objFields.containsKey('billingstate')) cleaned.put('BillingState', null);
+              if (objFields.containsKey('billingcountry')) cleaned.put('BillingCountry', null);
+              if (objFields.containsKey('shippingstate')) cleaned.put('ShippingState', null);
+              if (objFields.containsKey('shippingcountry')) cleaned.put('ShippingCountry', null);
+              retryRecords.add(cleaned);
+              retryIndices.add(i);
+            } else {
+              addUpsertResult(result, ur);
+            }
+          } else {
+            addUpsertResult(result, ur);
+          }
+        }
+        if (!retryRecords.isEmpty()) {
+          Database.UpsertResult[] retryResults = Database.upsert(retryRecords, externalField, false);
+          for (Integer r = 0; r < retryResults.size(); r++) {
+            Database.UpsertResult rur = retryResults[r];
+            addUpsertResult(result, rur);
+            if (rur.isSuccess()) {
+              Integer origIndex = retryIndices[r];
+              safeRecords[origIndex] = retryRecords[r];
+              safeRecords[origIndex].Id = rur.getId();
+            }
+          }
+        }
       }
+      persistInboundChildCollections(definition, rawRows, safeRecords, result);
     }
     return result;
+  }
+
+  private static Id standardPricebookIdCache;
+  private static Id getStandardPricebookId() {
+    if (standardPricebookIdCache != null) {
+      return standardPricebookIdCache;
+    }
+    if (Test.isRunningTest()) {
+      standardPricebookIdCache = Test.getStandardPricebookId();
+    } else {
+      List<Pricebook2> stdPbs = [
+        SELECT Id FROM Pricebook2 WHERE IsStandard = true LIMIT 1
+      ];
+      if (!stdPbs.isEmpty()) {
+        standardPricebookIdCache = stdPbs[0].Id;
+      }
+    }
+    return standardPricebookIdCache;
+  }
+
+  private static Id resolveDefaultPricebookId() {
+    if (Test.isRunningTest()) {
+      return Test.getStandardPricebookId();
+    }
+    List<Pricebook2> customStandard = [
+      SELECT Id FROM Pricebook2 WHERE Name = 'Standard' AND IsActive = true LIMIT 1
+    ];
+    if (!customStandard.isEmpty()) {
+      return customStandard[0].Id;
+    }
+    return getStandardPricebookId();
+  }
+
+  private static void prepareInboundParentRecords(
+    OperationDefinition definition,
+    List<Map<String, Object>> rawRows,
+    List<SObject> records
+  ) {
+    if (records == null || records.isEmpty() || String.isBlank(definition.salesforceObject)) {
+      return;
+    }
+    if (equivalentObject(definition.salesforceObject, 'Order')) {
+      prepareInboundOrderParents(definition, rawRows, records);
+    } else if (equivalentObject(definition.salesforceObject, 'Invoice__c')) {
+      prepareInboundInvoiceParents(definition, rawRows, records);
+    }
+  }
+
+  private static void prepareInboundInvoiceParents(
+    OperationDefinition definition,
+    List<Map<String, Object>> rawRows,
+    List<SObject> records
+  ) {
+    Set<String> customerRefValues = new Set<String>();
+    Set<String> customerRefNames = new Set<String>();
+    for (Integer i = 0; i < records.size(); i++) {
+      SObject rec = records[i];
+      if (rec.get('Related_Account__c') == null) {
+        Map<String, Object> raw = rawRows[i];
+        Object custVal = readPath(raw, 'CustomerRef.value');
+        if (custVal != null) {
+          customerRefValues.add(String.valueOf(custVal));
+        }
+        Object custName = readPath(raw, 'CustomerRef.name');
+        if (custName != null) {
+          customerRefNames.add(String.valueOf(custName));
+        }
+      }
+    }
+
+    Map<String, Id> accByQboId = new Map<String, Id>();
+    Map<String, Id> accByName = new Map<String, Id>();
+    if (!customerRefValues.isEmpty() || !customerRefNames.isEmpty()) {
+      for (Account acc : [
+        SELECT Id, QuickbookID__c, Name
+        FROM Account
+        WHERE QuickbookID__c IN :customerRefValues OR Name IN :customerRefNames
+      ]) {
+        if (String.isNotBlank(acc.QuickbookID__c)) {
+          accByQboId.put(acc.QuickbookID__c, acc.Id);
+        }
+        if (String.isNotBlank(acc.Name)) {
+          accByName.put(acc.Name.toLowerCase(), acc.Id);
+        }
+      }
+    }
+
+    for (Integer i = 0; i < records.size(); i++) {
+      SObject rec = records[i];
+      Map<String, Object> raw = rawRows[i];
+
+      if (rec.get('Related_Account__c') == null) {
+        Object custVal = readPath(raw, 'CustomerRef.value');
+        Object custName = readPath(raw, 'CustomerRef.name');
+        if (custVal != null && accByQboId.containsKey(String.valueOf(custVal))) {
+          rec.put('Related_Account__c', accByQboId.get(String.valueOf(custVal)));
+        } else if (custName != null && accByName.containsKey(String.valueOf(custName).toLowerCase())) {
+          rec.put('Related_Account__c', accByName.get(String.valueOf(custName).toLowerCase()));
+        }
+      }
+
+      if (rec.get('Invoice_Date__c') == null) {
+        Object txnDate = readPath(raw, 'TxnDate');
+        if (txnDate != null) {
+          try {
+            rec.put('Invoice_Date__c', Date.valueOf(String.valueOf(txnDate)));
+          } catch (Exception ex) {
+            rec.put('Invoice_Date__c', Date.today());
+          }
+        } else {
+          rec.put('Invoice_Date__c', Date.today());
+        }
+      }
+
+      if (rec.get('Amount__c') == null) {
+        Object totalAmt = readPath(raw, 'TotalAmt');
+        if (totalAmt != null) {
+          try {
+            rec.put('Amount__c', Decimal.valueOf(String.valueOf(totalAmt)));
+          } catch (Exception ex) {}
+        }
+      }
+    }
+  }
+
+  private static void prepareInboundOrderParents(
+    OperationDefinition definition,
+    List<Map<String, Object>> rawRows,
+    List<SObject> records
+  ) {
+    Id defaultPbId = resolveDefaultPricebookId();
+
+    Set<String> extIds = new Set<String>();
+    String extFieldName = definition.salesforceExternalIdField;
+    if (String.isNotBlank(extFieldName)) {
+      for (SObject rec : records) {
+        Object val = rec.get(extFieldName);
+        if (val != null) {
+          extIds.add(String.valueOf(val));
+        }
+      }
+    }
+    Map<String, Order> existingOrders = new Map<String, Order>();
+    if (!extIds.isEmpty()) {
+      for (Order ord : [
+        SELECT Id, AccountId, Pricebook2Id, Status, QuickbookID__c
+        FROM Order
+        WHERE QuickbookID__c IN :extIds
+      ]) {
+        if (String.isNotBlank(ord.QuickbookID__c)) {
+          existingOrders.put(ord.QuickbookID__c, ord);
+        }
+      }
+    }
+
+    Set<String> customerRefValues = new Set<String>();
+    Set<String> customerRefNames = new Set<String>();
+    for (Integer i = 0; i < records.size(); i++) {
+      SObject rec = records[i];
+      if (rec.get('AccountId') == null) {
+        Map<String, Object> raw = rawRows[i];
+        Object custVal = readPath(raw, 'CustomerRef.value');
+        if (custVal != null) {
+          customerRefValues.add(String.valueOf(custVal));
+        }
+        Object custName = readPath(raw, 'CustomerRef.name');
+        if (custName != null) {
+          customerRefNames.add(String.valueOf(custName));
+        }
+      }
+    }
+
+    Map<String, Id> accByQboId = new Map<String, Id>();
+    Map<String, Id> accByName = new Map<String, Id>();
+    if (!customerRefValues.isEmpty() || !customerRefNames.isEmpty()) {
+      for (Account acc : [
+        SELECT Id, QuickbookID__c, Name
+        FROM Account
+        WHERE QuickbookID__c IN :customerRefValues OR Name IN :customerRefNames
+      ]) {
+        if (String.isNotBlank(acc.QuickbookID__c)) {
+          accByQboId.put(acc.QuickbookID__c, acc.Id);
+        }
+        if (String.isNotBlank(acc.Name)) {
+          accByName.put(acc.Name.toLowerCase(), acc.Id);
+        }
+      }
+    }
+
+    for (Integer i = 0; i < records.size(); i++) {
+      SObject rec = records[i];
+      Map<String, Object> raw = rawRows[i];
+
+      String qboId = String.isNotBlank(extFieldName) && rec.get(extFieldName) != null
+        ? String.valueOf(rec.get(extFieldName))
+        : null;
+      Order existing = qboId != null ? existingOrders.get(qboId) : null;
+
+      if (existing != null && existing.Pricebook2Id != null) {
+        rec.put('Pricebook2Id', existing.Pricebook2Id);
+      } else if (rec.get('Pricebook2Id') == null && defaultPbId != null) {
+        rec.put('Pricebook2Id', defaultPbId);
+      }
+
+      if (rec.get('AccountId') == null) {
+        if (existing != null && existing.AccountId != null) {
+          rec.put('AccountId', existing.AccountId);
+        } else {
+          Object custVal = readPath(raw, 'CustomerRef.value');
+          Object custName = readPath(raw, 'CustomerRef.name');
+          if (custVal != null && accByQboId.containsKey(String.valueOf(custVal))) {
+            rec.put('AccountId', accByQboId.get(String.valueOf(custVal)));
+          } else if (custName != null && accByName.containsKey(String.valueOf(custName).toLowerCase())) {
+            rec.put('AccountId', accByName.get(String.valueOf(custName).toLowerCase()));
+          }
+        }
+      }
+
+      if (rec.get('Status') == null) {
+        rec.put('Status', existing != null && existing.Status != null ? existing.Status : 'Draft');
+      }
+
+      if (rec.get('EffectiveDate') == null) {
+        Object txnDate = readPath(raw, 'TxnDate');
+        if (txnDate != null) {
+          try {
+            rec.put('EffectiveDate', Date.valueOf(String.valueOf(txnDate)));
+          } catch (Exception ex) {
+            rec.put('EffectiveDate', Date.today());
+          }
+        } else {
+          rec.put('EffectiveDate', Date.today());
+        }
+      }
+    }
+  }
+
+  private static void persistInboundChildCollections(
+    OperationDefinition definition,
+    List<Map<String, Object>> rawRows,
+    List<SObject> parentRecords,
+    ConnectorExecutionResult result
+  ) {
+    List<ChildCollectionGroup> childGroups = resolveChildCollectionGroups(definition, 'Inbound');
+    if (childGroups.isEmpty() || parentRecords.isEmpty()) {
+      return;
+    }
+
+    for (ChildCollectionGroup groupItem : childGroups) {
+      Schema.SObjectType childType = resolveObjectType(groupItem.childObject);
+      if (childType == null) {
+        continue;
+      }
+      Map<String, Schema.SObjectField> childFields = childType.getDescribe().fields.getMap();
+      String resolvedParentField = resolveFieldName(childFields, groupItem.parentField);
+
+      Schema.SObjectField childExternalField;
+      for (MappingRule mapping : groupItem.mappings) {
+        if (mapping.isExternalId == true && String.isNotBlank(mapping.salesforceField)) {
+          childExternalField = childFields.get(resolveFieldName(childFields, mapping.salesforceField));
+          break;
+        }
+      }
+
+      List<SObject> childRecords = new List<SObject>();
+      List<Map<String, Object>> childRaws = new List<Map<String, Object>>();
+      List<SObject> parentRecsForChild = new List<SObject>();
+
+      for (Integer i = 0; i < parentRecords.size(); i++) {
+        SObject parentRec = parentRecords[i];
+        if (parentRec.Id == null) {
+          continue;
+        }
+        Map<String, Object> parentRaw = rawRows[i];
+        Object rawCollection = readPath(parentRaw, groupItem.collectionPath);
+        if (!(rawCollection instanceof List<Object>)) {
+          continue;
+        }
+        for (Object itemObj : (List<Object>) rawCollection) {
+          if (!(itemObj instanceof Map<String, Object>)) {
+            continue;
+          }
+          Map<String, Object> childRaw = (Map<String, Object>) itemObj;
+
+          if (equivalentObject(groupItem.childObject, 'OrderItem') || equivalentObject(groupItem.childObject, 'Invoice_Line__c')) {
+            String detailType = (String) childRaw.get('DetailType');
+            if (detailType == 'SubTotalLineDetail') {
+              continue;
+            }
+            if (readPath(childRaw, 'SalesItemLineDetail.ItemRef.value') == null && detailType != 'SalesItemLineDetail') {
+              continue;
+            }
+          }
+
+          SObject childTarget = childType.newSObject();
+          childTarget.put(resolvedParentField, parentRec.Id);
+
+          for (MappingRule mapping : groupItem.mappings) {
+            String fName = resolveFieldName(childFields, mapping.salesforceField);
+            Object val = readPath(childRaw, mapping.externalPath);
+            val = transform(val, mapping.transform);
+            if (val == null && String.isNotBlank(mapping.defaultValue)) {
+              val = transform(mapping.defaultValue, mapping.transform);
+            }
+            if (val != null) {
+              putCoerced(childTarget, fName, val, childFields);
+            }
+          }
+          childRecords.add(childTarget);
+          childRaws.add(childRaw);
+          parentRecsForChild.add(parentRec);
+        }
+      }
+
+      if (childRecords.isEmpty()) {
+        continue;
+      }
+
+      if (equivalentObject(groupItem.childObject, 'OrderItem')) {
+        prepareInboundOrderItems(childRecords, childRaws, parentRecsForChild);
+      } else if (equivalentObject(groupItem.childObject, 'Invoice_Line__c')) {
+        prepareInboundInvoiceLines(childRecords, childRaws, parentRecsForChild);
+      }
+
+      if (childExternalField != null) {
+        String extName = childExternalField.getDescribe().getName();
+        Set<String> extVals = new Set<String>();
+        for (SObject cr : childRecords) {
+          if (cr.Id == null && cr.get(extName) != null) {
+            extVals.add(String.valueOf(cr.get(extName)));
+          }
+        }
+        if (!extVals.isEmpty()) {
+          String childObjName = childType.getDescribe().getName();
+          String soql = 'SELECT Id, ' + extName + ' FROM ' + childObjName + ' WHERE ' + extName + ' IN :extVals';
+          Map<String, Id> existingByExt = new Map<String, Id>();
+          for (SObject existRec : Database.query(soql)) {
+            existingByExt.put(String.valueOf(existRec.get(extName)), existRec.Id);
+          }
+          for (SObject cr : childRecords) {
+            if (cr.Id == null && cr.get(extName) != null) {
+              String v = String.valueOf(cr.get(extName));
+              if (existingByExt.containsKey(v)) {
+                cr.Id = existingByExt.get(v);
+              }
+            }
+          }
+        }
+      }
+
+      List<SObject> toInsert = new List<SObject>();
+      List<SObject> toUpdate = new List<SObject>();
+      for (SObject cr : childRecords) {
+        if (cr.Id != null) {
+          toUpdate.add(cr);
+        } else {
+          toInsert.add(cr);
+        }
+      }
+
+      if (!toInsert.isEmpty()) {
+        SObjectAccessDecision createDecision = Security.stripInaccessible(
+          AccessType.CREATABLE,
+          toInsert
+        );
+        Database.SaveResult[] srs = Database.insert(createDecision.getRecords(), false);
+        addSaveResults(result, srs);
+      }
+
+      if (!toUpdate.isEmpty()) {
+        SObjectAccessDecision updateDecision = Security.stripInaccessible(
+          AccessType.UPDATABLE,
+          toUpdate
+        );
+        Database.SaveResult[] urs = Database.update(updateDecision.getRecords(), false);
+        addSaveResults(result, urs);
+      }
+    }
+  }
+
+  private static void prepareInboundOrderItems(
+    List<SObject> childRecords,
+    List<Map<String, Object>> childRaws,
+    List<SObject> parentRecords
+  ) {
+    if (childRecords.isEmpty()) {
+      return;
+    }
+
+    Id stdPbId = getStandardPricebookId();
+
+    // 1. Quantities and UnitPrices
+    for (Integer i = 0; i < childRecords.size(); i++) {
+      SObject item = childRecords[i];
+      Map<String, Object> childRaw = childRaws[i];
+      Decimal qty = (Decimal) item.get('Quantity');
+      if (qty == null || qty <= 0) {
+        item.put('Quantity', 1);
+        qty = 1;
+      }
+      if (item.get('UnitPrice') == null) {
+        Object rawAmt = readPath(childRaw, 'Amount');
+        if (rawAmt != null) {
+          Decimal amount = Decimal.valueOf(String.valueOf(rawAmt));
+          item.put('UnitPrice', qty > 0 ? (amount / qty) : amount);
+        } else {
+          item.put('UnitPrice', 0);
+        }
+      }
+    }
+
+    // 2. Resolve Product2
+    Set<String> qboProdIds = new Set<String>();
+    Set<String> prodNames = new Set<String>();
+    for (Map<String, Object> raw : childRaws) {
+      Object pid = readPath(raw, 'SalesItemLineDetail.ItemRef.value');
+      if (pid != null) {
+        qboProdIds.add(String.valueOf(pid));
+      }
+      Object pName = readPath(raw, 'SalesItemLineDetail.ItemRef.name');
+      if (pName != null) {
+        prodNames.add(String.valueOf(pName));
+      }
+    }
+
+    Map<String, Product2> prodByQboId = new Map<String, Product2>();
+    Map<String, Product2> prodByName = new Map<String, Product2>();
+    if (!qboProdIds.isEmpty() || !prodNames.isEmpty()) {
+      for (Product2 p : [
+        SELECT Id, Name, QuickbookID__c, IsActive
+        FROM Product2
+        WHERE QuickbookID__c IN :qboProdIds OR Name IN :prodNames
+      ]) {
+        if (String.isNotBlank(p.QuickbookID__c)) {
+          prodByQboId.put(p.QuickbookID__c, p);
+        }
+        if (String.isNotBlank(p.Name)) {
+          prodByName.put(p.Name.toLowerCase(), p);
+        }
+      }
+    }
+
+    List<Product2> prodsToInsert = new List<Product2>();
+    for (Map<String, Object> raw : childRaws) {
+      Object pid = readPath(raw, 'SalesItemLineDetail.ItemRef.value');
+      Object pName = readPath(raw, 'SalesItemLineDetail.ItemRef.name');
+      String sPid = pid != null ? String.valueOf(pid) : null;
+      String sName = pName != null ? String.valueOf(pName) : null;
+      Boolean found = (sPid != null && prodByQboId.containsKey(sPid)) ||
+                      (sName != null && prodByName.containsKey(sName.toLowerCase()));
+      if (!found) {
+        String finalName = String.isNotBlank(sName) ? sName : (sPid != null ? 'QBO Item ' + sPid : 'QBO Product');
+        Product2 np = new Product2(
+          Name = finalName,
+          QuickbookID__c = sPid,
+          IsActive = true
+        );
+        prodsToInsert.add(np);
+        if (sPid != null) prodByQboId.put(sPid, np);
+        if (sName != null) prodByName.put(sName.toLowerCase(), np);
+      }
+    }
+    if (!prodsToInsert.isEmpty()) {
+      insert prodsToInsert;
+      for (Product2 np : prodsToInsert) {
+        if (String.isNotBlank(np.QuickbookID__c)) prodByQboId.put(np.QuickbookID__c, np);
+        if (String.isNotBlank(np.Name)) prodByName.put(np.Name.toLowerCase(), np);
+      }
+    }
+
+    // 3. Resolve PricebookEntries
+    Set<Id> productIds = new Set<Id>();
+    List<Product2> matchedProducts = new List<Product2>();
+    for (Map<String, Object> raw : childRaws) {
+      Object pid = readPath(raw, 'SalesItemLineDetail.ItemRef.value');
+      Object pName = readPath(raw, 'SalesItemLineDetail.ItemRef.name');
+      Product2 matched;
+      if (pid != null && prodByQboId.containsKey(String.valueOf(pid))) {
+        matched = prodByQboId.get(String.valueOf(pid));
+      } else if (pName != null && prodByName.containsKey(String.valueOf(pName).toLowerCase())) {
+        matched = prodByName.get(String.valueOf(pName).toLowerCase());
+      }
+      matchedProducts.add(matched);
+      if (matched != null && matched.Id != null) {
+        productIds.add(matched.Id);
+      }
+    }
+
+    Set<Id> orderPbIds = new Set<Id>();
+    if (stdPbId != null) {
+      orderPbIds.add(stdPbId);
+    }
+    for (SObject parentRec : parentRecords) {
+      Id pbId = (Id) parentRec.get('Pricebook2Id');
+      if (pbId != null) {
+        orderPbIds.add(pbId);
+      }
+    }
+
+    Map<String, PricebookEntry> pbeByKey = new Map<String, PricebookEntry>();
+    if (!productIds.isEmpty() && !orderPbIds.isEmpty()) {
+      for (PricebookEntry pbe : [
+        SELECT Id, Pricebook2Id, Product2Id, UnitPrice, IsActive
+        FROM PricebookEntry
+        WHERE Pricebook2Id IN :orderPbIds AND Product2Id IN :productIds
+      ]) {
+        String key = String.valueOf(pbe.Pricebook2Id) + '::' + String.valueOf(pbe.Product2Id);
+        pbeByKey.put(key, pbe);
+      }
+    }
+
+    Map<Id, PricebookEntry> stdPbesToInsertByProd = new Map<Id, PricebookEntry>();
+    for (Product2 p : matchedProducts) {
+      if (p == null || p.Id == null || stdPbId == null) continue;
+      String stdKey = String.valueOf(stdPbId) + '::' + String.valueOf(p.Id);
+      if (!pbeByKey.containsKey(stdKey) && !stdPbesToInsertByProd.containsKey(p.Id)) {
+        PricebookEntry spe = new PricebookEntry(
+          Pricebook2Id = stdPbId,
+          Product2Id = p.Id,
+          UnitPrice = 0,
+          IsActive = true
+        );
+        stdPbesToInsertByProd.put(p.Id, spe);
+      }
+    }
+    if (!stdPbesToInsertByProd.isEmpty()) {
+      insert stdPbesToInsertByProd.values();
+      for (PricebookEntry spe : stdPbesToInsertByProd.values()) {
+        pbeByKey.put(String.valueOf(spe.Pricebook2Id) + '::' + String.valueOf(spe.Product2Id), spe);
+      }
+    }
+
+    Map<String, PricebookEntry> customPbesToInsertByKey = new Map<String, PricebookEntry>();
+    for (Integer i = 0; i < childRecords.size(); i++) {
+      Product2 p = matchedProducts[i];
+      SObject parentRec = parentRecords[i];
+      Id pbId = (Id) parentRec.get('Pricebook2Id');
+      if (pbId == null) pbId = stdPbId;
+      if (p == null || p.Id == null || pbId == null || pbId == stdPbId) continue;
+      String cKey = String.valueOf(pbId) + '::' + String.valueOf(p.Id);
+      if (!pbeByKey.containsKey(cKey) && !customPbesToInsertByKey.containsKey(cKey)) {
+        PricebookEntry cpe = new PricebookEntry(
+          Pricebook2Id = pbId,
+          Product2Id = p.Id,
+          UnitPrice = 0,
+          IsActive = true
+        );
+        customPbesToInsertByKey.put(cKey, cpe);
+      }
+    }
+    if (!customPbesToInsertByKey.isEmpty()) {
+      insert customPbesToInsertByKey.values();
+      for (PricebookEntry cpe : customPbesToInsertByKey.values()) {
+        pbeByKey.put(String.valueOf(cpe.Pricebook2Id) + '::' + String.valueOf(cpe.Product2Id), cpe);
+      }
+    }
+
+    for (Integer i = 0; i < childRecords.size(); i++) {
+      SObject item = childRecords[i];
+      Product2 p = matchedProducts[i];
+      SObject parentRec = parentRecords[i];
+      Id pbId = (Id) parentRec.get('Pricebook2Id');
+      if (pbId == null) pbId = stdPbId;
+      if (p != null && p.Id != null && pbId != null) {
+        String key = String.valueOf(pbId) + '::' + String.valueOf(p.Id);
+        if (pbeByKey.containsKey(key)) {
+          item.put('PricebookEntryId', pbeByKey.get(key).Id);
+        }
+      }
+    }
+
+    // 4. External ID cross-order uniqueness guard
+    Set<String> lineExtIds = new Set<String>();
+    for (SObject item : childRecords) {
+      Object extVal = item.get('External_Id__c');
+      if (extVal != null) {
+        lineExtIds.add(String.valueOf(extVal));
+      }
+    }
+    if (!lineExtIds.isEmpty()) {
+      Map<String, OrderItem> existingByExtId = new Map<String, OrderItem>();
+      for (OrderItem existingItem : [
+        SELECT Id, OrderId, External_Id__c
+        FROM OrderItem
+        WHERE External_Id__c IN :lineExtIds
+      ]) {
+        if (String.isNotBlank(existingItem.External_Id__c)) {
+          existingByExtId.put(existingItem.External_Id__c, existingItem);
+        }
+      }
+      for (SObject item : childRecords) {
+        Object extVal = item.get('External_Id__c');
+        if (extVal == null) continue;
+        String sExt = String.valueOf(extVal);
+        Id currentOrderId = (Id) item.get('OrderId');
+        if (existingByExtId.containsKey(sExt)) {
+          OrderItem existingItem = existingByExtId.get(sExt);
+          if (existingItem.OrderId == currentOrderId) {
+            item.Id = existingItem.Id;
+          } else {
+            item.put('External_Id__c', String.valueOf(currentOrderId) + '_' + sExt);
+          }
+        }
+      }
+    }
+  }
+
+  private static void prepareInboundInvoiceLines(
+    List<SObject> childRecords,
+    List<Map<String, Object>> childRaws,
+    List<SObject> parentRecords
+  ) {
+    if (childRecords.isEmpty()) {
+      return;
+    }
+
+    // 1. Quantities and UnitPrices
+    for (Integer i = 0; i < childRecords.size(); i++) {
+      SObject item = childRecords[i];
+      Map<String, Object> childRaw = childRaws[i];
+      Decimal qty = (Decimal) item.get('Quantity__c');
+      if (qty == null || qty <= 0) {
+        item.put('Quantity__c', 1);
+        qty = 1;
+      }
+      if (item.get('Unit_Price__c') == null) {
+        Object rawPrice = readPath(childRaw, 'SalesItemLineDetail.UnitPrice');
+        if (rawPrice != null) {
+          item.put('Unit_Price__c', Decimal.valueOf(String.valueOf(rawPrice)));
+        } else {
+          Object rawAmt = readPath(childRaw, 'Amount');
+          if (rawAmt != null) {
+            Decimal amount = Decimal.valueOf(String.valueOf(rawAmt));
+            item.put('Unit_Price__c', qty > 0 ? (amount / qty) : amount);
+          } else {
+            item.put('Unit_Price__c', 0);
+          }
+        }
+      }
+    }
+
+    // 2. Resolve Product__c
+    Set<String> qboProdIds = new Set<String>();
+    Set<String> prodNames = new Set<String>();
+    for (Map<String, Object> raw : childRaws) {
+      Object pid = readPath(raw, 'SalesItemLineDetail.ItemRef.value');
+      if (pid != null) {
+        qboProdIds.add(String.valueOf(pid));
+      }
+      Object pName = readPath(raw, 'SalesItemLineDetail.ItemRef.name');
+      if (pName != null) {
+        prodNames.add(String.valueOf(pName));
+      }
+    }
+
+    Map<String, Product2> prodByQboId = new Map<String, Product2>();
+    Map<String, Product2> prodByName = new Map<String, Product2>();
+    if (!qboProdIds.isEmpty() || !prodNames.isEmpty()) {
+      for (Product2 p : [
+        SELECT Id, Name, QuickbookID__c, IsActive
+        FROM Product2
+        WHERE QuickbookID__c IN :qboProdIds OR Name IN :prodNames
+      ]) {
+        if (String.isNotBlank(p.QuickbookID__c)) {
+          prodByQboId.put(p.QuickbookID__c, p);
+        }
+        if (String.isNotBlank(p.Name)) {
+          prodByName.put(p.Name.toLowerCase(), p);
+        }
+      }
+    }
+
+    for (Integer i = 0; i < childRecords.size(); i++) {
+      SObject item = childRecords[i];
+      Map<String, Object> raw = childRaws[i];
+      Object pid = readPath(raw, 'SalesItemLineDetail.ItemRef.value');
+      Object pName = readPath(raw, 'SalesItemLineDetail.ItemRef.name');
+      Product2 matched = null;
+      if (pid != null && prodByQboId.containsKey(String.valueOf(pid))) {
+        matched = prodByQboId.get(String.valueOf(pid));
+      } else if (pName != null && prodByName.containsKey(String.valueOf(pName).toLowerCase())) {
+        matched = prodByName.get(String.valueOf(pName).toLowerCase());
+      }
+      if (matched != null) {
+        item.put('Product__c', matched.Id);
+      }
+    }
+
+    // 3. External ID cross-invoice uniqueness guard
+    Set<String> lineExtIds = new Set<String>();
+    for (SObject item : childRecords) {
+      Object extVal = item.get('External_Id__c');
+      if (extVal != null) {
+        lineExtIds.add(String.valueOf(extVal));
+      }
+    }
+    if (!lineExtIds.isEmpty()) {
+      Map<String, Invoice_Line__c> existingByExtId = new Map<String, Invoice_Line__c>();
+      for (Invoice_Line__c existingItem : [
+        SELECT Id, Invoice__c, External_Id__c
+        FROM Invoice_Line__c
+        WHERE External_Id__c IN :lineExtIds
+      ]) {
+        if (String.isNotBlank(existingItem.External_Id__c)) {
+          existingByExtId.put(existingItem.External_Id__c, existingItem);
+        }
+      }
+      for (SObject item : childRecords) {
+        Object extVal = item.get('External_Id__c');
+        if (extVal == null) continue;
+        String sExt = String.valueOf(extVal);
+        Id currentInvoiceId = (Id) item.get('Invoice__c');
+        if (existingByExtId.containsKey(sExt)) {
+          Invoice_Line__c existingItem = existingByExtId.get(sExt);
+          if (existingItem.Invoice__c == currentInvoiceId) {
+            item.Id = existingItem.Id;
+          } else {
+            item.put('External_Id__c', String.valueOf(currentInvoiceId) + '_' + sExt);
+          }
+        }
+      }
+    }
   }
 
   private static void addSaveResults(
@@ -824,6 +1638,8 @@ public inherited sharing class GenericIntegrationRuntime {
     }
 
     List<SObject> updates = new List<SObject>();
+    Schema.SObjectType objectType = records[0].getSObjectType();
+    Map<String, Schema.SObjectField> fields = objectType.getDescribe().fields.getMap();
     for (Integer indexValue = 0; indexValue < records.size(); indexValue++) {
       SObject recordValue = records[indexValue];
       String responseBody = responseBodies == null || responseBodies.size() <= indexValue
@@ -835,9 +1651,18 @@ public inherited sharing class GenericIntegrationRuntime {
       SObject updateRecord = recordValue.getSObjectType().newSObject(recordValue.Id);
       for (MappingRule mapping : responseMappings) {
         Object value = parsed == null ? null : readPath(parsed, mapping.externalPath);
+        if (value == null && parsed instanceof Map<String, Object>) {
+          Map<String, Object> rootMap = (Map<String, Object>) parsed;
+          for (String rk : rootMap.keySet()) {
+            if (rootMap.get(rk) instanceof Map<String, Object>) {
+              value = readPath(rootMap.get(rk), mapping.externalPath);
+              if (value != null) break;
+            }
+          }
+        }
         value = transform(value, mapping.transform);
         if (value != null || normalize(mapping.nullBehavior) == 'include') {
-          updateRecord.put(mapping.salesforceField, value);
+          putCoerced(updateRecord, mapping.salesforceField, value, fields);
         }
       }
       if (
@@ -847,9 +1672,11 @@ public inherited sharing class GenericIntegrationRuntime {
       ) {
         Object externalId = readPath(parsed, definition.responseIdPath);
         if (externalId != null) {
-          updateRecord.put(
+          putCoerced(
+            updateRecord,
             definition.salesforceExternalIdField,
-            String.valueOf(externalId)
+            String.valueOf(externalId),
+            fields
           );
         }
       }
@@ -877,6 +1704,69 @@ public inherited sharing class GenericIntegrationRuntime {
           result.addError(errorValue.getStatusCode() + ': ' + errorValue.getMessage());
         }
       }
+    }
+    List<SObject> childUpdates = new List<SObject>();
+    List<ChildCollectionGroup> childGroups = resolveChildCollectionGroups(definition);
+    if (!childGroups.isEmpty()) {
+      Set<Id> parentIds = new Set<Id>();
+      for (SObject rec : records) {
+        if (rec.Id != null) parentIds.add(rec.Id);
+      }
+      Map<String, Map<Id, List<SObject>>> childData = queryChildCollections(childGroups, parentIds);
+      for (ChildCollectionGroup groupItem : childGroups) {
+        String idField = null;
+        for (MappingRule rule : groupItem.mappings) {
+          if (String.isNotBlank(rule.externalPath) && (rule.externalPath.equalsIgnoreCase('Id') || rule.externalPath.equalsIgnoreCase('Line.Id'))) {
+            idField = rule.salesforceField;
+            break;
+          }
+        }
+        if (String.isNotBlank(idField)) {
+          Map<Id, List<SObject>> byParent = childData.get(groupItem.collectionPath);
+          for (Integer i = 0; i < records.size(); i++) {
+            SObject parentRec = records[i];
+            List<SObject> children = (byParent != null && parentRec.Id != null) ? byParent.get(parentRec.Id) : null;
+            if (children == null || children.isEmpty()) continue;
+            String responseBody = (responseBodies != null && responseBodies.size() > i) ? responseBodies[i] : null;
+            Object parsed = String.isBlank(responseBody) ? null : parseJson(responseBody);
+            if (parsed == null) continue;
+            Object rawLines = readPath(parsed, groupItem.collectionPath);
+            if (rawLines == null && parsed instanceof Map<String, Object>) {
+              Map<String, Object> rootMap = (Map<String, Object>) parsed;
+              for (String rootKey : rootMap.keySet()) {
+                Object childObj = rootMap.get(rootKey);
+                if (childObj instanceof Map<String, Object>) {
+                  rawLines = readPath(childObj, groupItem.collectionPath);
+                  if (rawLines != null) break;
+                }
+              }
+            }
+            List<Object> lineItems = (rawLines instanceof List<Object>) ? (List<Object>) rawLines : (rawLines != null ? new List<Object>{ rawLines } : new List<Object>());
+            Integer lineIdx = 0;
+            for (Object lineObj : lineItems) {
+              if (lineIdx >= children.size()) break;
+              if (lineObj instanceof Map<String, Object>) {
+                Map<String, Object> lineMap = (Map<String, Object>) lineObj;
+                String detailType = (String) lineMap.get('DetailType');
+                if (String.isNotBlank(detailType) && detailType.equalsIgnoreCase('SubTotalLineDetail')) {
+                  continue;
+                }
+                Object lineIdVal = lineMap.get('Id');
+                if (lineIdVal != null) {
+                  SObject childUpdate = children[lineIdx].getSObjectType().newSObject(children[lineIdx].Id);
+                  childUpdate.put(idField, String.valueOf(lineIdVal));
+                  childUpdates.add(childUpdate);
+                  lineIdx++;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    if (!childUpdates.isEmpty()) {
+      SObjectAccessDecision childDecision = Security.stripInaccessible(AccessType.UPDATABLE, childUpdates);
+      Database.update(childDecision.getRecords(), false);
     }
     return result;
   }
@@ -1334,9 +2224,17 @@ public inherited sharing class GenericIntegrationRuntime {
       )
       .getDescribe()
       .fields.getMap();
-    resolveFieldName(fields, mapping.salesforceField);
+    if (String.isNotBlank(mapping.salesforceField)) {
+      if (!mapping.salesforceField.contains('.')) {
+        resolveFieldName(fields, mapping.salesforceField);
+      }
+    }
     validatePath(mapping.externalPath, 'mapping external path', true);
-    if (!SUPPORTED_TRANSFORMS.contains(normalize(mapping.transform))) {
+    Boolean isConstant = String.isNotBlank(mapping.transform) && mapping.transform.toLowerCase().startsWith('constant:');
+    if (
+      !SUPPORTED_TRANSFORMS.contains(normalize(mapping.transform)) &&
+      !isConstant
+    ) {
       throw new GenericIntegrationRuntimeException(
         'Mapping transform is unsupported: ' + mapping.transform
       );
@@ -1403,9 +2301,12 @@ public inherited sharing class GenericIntegrationRuntime {
     return value.replaceAll('\\{\\{[A-Za-z][A-Za-z0-9_.]*\\}\\}', '');
   }
 
-  private static Object transform(Object value, String transformName) {
+  public static Object transform(Object value, String transformName) {
     if (value == null) {
       return null;
+    }
+    if (String.isNotBlank(transformName) && transformName.toLowerCase().startsWith('constant:')) {
+      return transformName.substring(9);
     }
     String transformValue = normalize(transformName);
     if (transformValue == '' || transformValue == 'identity') {
@@ -1445,6 +2346,116 @@ public inherited sharing class GenericIntegrationRuntime {
       return EncodingUtil.urlEncode(stringValue, 'UTF-8');
     }
     throw new GenericIntegrationRuntimeException('Unsupported transform: ' + transformName);
+  }
+
+  public static void putCoerced(
+    SObject target,
+    String fieldName,
+    Object value,
+    Map<String, Schema.SObjectField> fields
+  ) {
+    if (value == null) {
+      target.put(fieldName, null);
+      return;
+    }
+    Schema.SObjectField field = fields != null
+      ? fields.get(fieldName.toLowerCase())
+      : null;
+    if (field == null) {
+      target.put(fieldName, value);
+      return;
+    }
+    Schema.DescribeFieldResult dfr = field.getDescribe();
+    if (target.Id != null && !dfr.isUpdateable()) {
+      return;
+    }
+    if (target.Id == null && !dfr.isCreateable()) {
+      return;
+    }
+    Schema.DisplayType dt = dfr.getType();
+    if (dt == Schema.DisplayType.DATE) {
+      if (value instanceof Date) {
+        target.put(fieldName, value);
+      } else if (value instanceof Datetime) {
+        target.put(fieldName, ((Datetime) value).dateGmt());
+      } else if (value instanceof String) {
+        String strVal = (String) value;
+        if (strVal.contains('T')) {
+          strVal = strVal.substringBefore('T');
+        }
+        target.put(fieldName, Date.valueOf(strVal));
+      } else {
+        target.put(fieldName, value);
+      }
+    } else if (dt == Schema.DisplayType.DATETIME) {
+      if (value instanceof Datetime) {
+        target.put(fieldName, value);
+      } else if (value instanceof Date) {
+        target.put(fieldName, Datetime.newInstance((Date) value, Time.newInstance(0, 0, 0, 0)));
+      } else if (value instanceof String) {
+        String strVal = (String) value;
+        if (!strVal.contains('T') && strVal.length() == 10) {
+          target.put(fieldName, Datetime.newInstance(Date.valueOf(strVal), Time.newInstance(0, 0, 0, 0)));
+        } else {
+          target.put(fieldName, (Datetime) JSON.deserialize('"' + strVal + '"', Datetime.class));
+        }
+      } else {
+        target.put(fieldName, value);
+      }
+    } else if (
+      dt == Schema.DisplayType.DOUBLE ||
+      dt == Schema.DisplayType.CURRENCY ||
+      dt == Schema.DisplayType.PERCENT
+    ) {
+      if (value instanceof Decimal) {
+        target.put(fieldName, value);
+      } else if (value instanceof Integer) {
+        target.put(fieldName, Decimal.valueOf((Integer) value));
+      } else if (value instanceof Double) {
+        target.put(fieldName, Decimal.valueOf((Double) value));
+      } else if (value instanceof String) {
+        target.put(fieldName, Decimal.valueOf((String) value));
+      } else {
+        target.put(fieldName, value);
+      }
+    } else if (dt == Schema.DisplayType.INTEGER) {
+      if (value instanceof Integer) {
+        target.put(fieldName, value);
+      } else if (value instanceof Decimal) {
+        target.put(fieldName, ((Decimal) value).intValue());
+      } else if (value instanceof String) {
+        target.put(fieldName, Integer.valueOf((String) value));
+      } else {
+        target.put(fieldName, value);
+      }
+    } else if (dt == Schema.DisplayType.BOOLEAN) {
+      if (value instanceof Boolean) {
+        target.put(fieldName, value);
+      } else if (value instanceof String) {
+        target.put(fieldName, Boolean.valueOf((String) value));
+      } else {
+        target.put(fieldName, value);
+      }
+    } else if (
+      dt == Schema.DisplayType.STRING ||
+      dt == Schema.DisplayType.TEXTAREA ||
+      dt == Schema.DisplayType.PICKLIST
+    ) {
+      target.put(fieldName, String.valueOf(value));
+    } else if (dt == Schema.DisplayType.REFERENCE) {
+      if (value instanceof Id) {
+        target.put(fieldName, value);
+      } else if (value instanceof String) {
+        String strVal = (String) value;
+        if (Pattern.matches('^[a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?$', strVal)) {
+          try {
+            target.put(fieldName, (Id) strVal);
+          } catch (Exception ex) {}
+        }
+      }
+    } else {
+      target.put(fieldName, value);
+    }
   }
 
   private static Object readSObjectField(SObject recordValue, String fieldPath) {
@@ -1643,6 +2654,71 @@ public inherited sharing class GenericIntegrationRuntime {
     return fields.get(candidate).getDescribe().getName();
   }
 
+  public static Schema.DescribeFieldResult resolveReadableFieldPath(
+    Schema.SObjectType objectType,
+    String fieldPath
+  ) {
+    if (objectType == null || String.isBlank(fieldPath)) {
+      throw new GenericIntegrationRuntimeException('Invalid field path or object type.');
+    }
+    List<String> parts = fieldPath.split('\\.');
+    Schema.SObjectType currentType = objectType;
+    Schema.DescribeFieldResult finalDescribe = null;
+
+    for (Integer i = 0; i < parts.size(); i++) {
+      String part = parts[i].trim();
+      Map<String, Schema.SObjectField> fieldMap = currentType.getDescribe().fields.getMap();
+      Schema.SObjectField field = null;
+
+      if (fieldMap.containsKey(part)) {
+        field = fieldMap.get(part);
+      } else {
+        String candidateName = part;
+        if (candidateName.endsWith('__r')) {
+          candidateName = candidateName.substring(0, candidateName.length() - 3) + '__c';
+        } else if (!candidateName.endsWith('Id')) {
+          candidateName = candidateName + 'Id';
+        }
+        if (fieldMap.containsKey(candidateName)) {
+          field = fieldMap.get(candidateName);
+        } else {
+          for (String fn : fieldMap.keySet()) {
+            if (fn.equalsIgnoreCase(part) || fn.equalsIgnoreCase(candidateName)) {
+              field = fieldMap.get(fn);
+              break;
+            }
+          }
+        }
+      }
+
+      if (field == null) {
+        throw new GenericIntegrationRuntimeException(
+          'Field or relationship ' + part + ' is unavailable on ' + currentType.getDescribe().getName()
+        );
+      }
+
+      Schema.DescribeFieldResult dfr = field.getDescribe();
+      if (!dfr.isAccessible()) {
+        throw new GenericIntegrationRuntimeException(
+          'Field ' + part + ' is not accessible on ' + currentType.getDescribe().getName()
+        );
+      }
+
+      if (i == parts.size() - 1) {
+        finalDescribe = dfr;
+      } else {
+        List<Schema.SObjectType> refTypes = dfr.getReferenceTo();
+        if (refTypes.isEmpty()) {
+          throw new GenericIntegrationRuntimeException(
+            'Field ' + part + ' on ' + currentType.getDescribe().getName() + ' is not a relationship field.'
+          );
+        }
+        currentType = refTypes[0];
+      }
+    }
+    return finalDescribe;
+  }
+
   private static void validatePath(String value, String label, Boolean required) {
     if (String.isBlank(value)) {
       if (required) {
@@ -1734,6 +2810,7 @@ public inherited sharing class GenericIntegrationRuntime {
     result.inboundMaxAgeSeconds = source.inboundMaxAgeSeconds;
     result.inboundIdempotencyPath = source.inboundIdempotencyPath;
     result.salesforceExternalIdField = source.salesforceExternalIdField;
+    result.resourceContractJson = source.resourceContractJson;
     result.mappings = new List<MappingRule>();
     for (MappingRule mapping : source.mappings == null ? new List<MappingRule>() : source.mappings) {
       MappingRule copied = new MappingRule();
@@ -1757,7 +2834,7 @@ public inherited sharing class GenericIntegrationRuntime {
     return result;
   }
 
-  private static String normalize(String value) {
+  public static String normalize(String value) {
     return String.isBlank(value) ? '' : value.toLowerCase().replaceAll('[^a-z0-9]', '');
   }
 

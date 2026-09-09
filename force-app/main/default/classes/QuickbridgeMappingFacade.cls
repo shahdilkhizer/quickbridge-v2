@@ -55,6 +55,12 @@ public with sharing class QuickbridgeMappingFacade {
   }
 
   @AuraEnabled(cacheable=false)
+  public static QuickbridgeAssistantService.Analysis reviewMappingOperation(String sessionToken, String requestJson) {
+    QuickbridgeAdminSecurity.requireSession(sessionToken);
+    return QuickbridgeAssistantService.review(requestJson);
+  }
+
+  @AuraEnabled(cacheable=false)
   public static MappingAnalysis analyzeMappings(String sessionToken, String requestJson) {
     QuickbridgeAdminSecurity.requireSession(sessionToken);
     String connectorKey = connectorFromRequest(requestJson);

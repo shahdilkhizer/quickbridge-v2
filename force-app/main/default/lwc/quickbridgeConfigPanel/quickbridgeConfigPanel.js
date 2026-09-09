@@ -19,6 +19,8 @@ import getMappingWorkspace from '@salesforce/apex/QuickbridgeMappingFacade.getMa
 import saveMappings from '@salesforce/apex/QuickbridgeMappingFacade.saveMappings';
 import clearMappings from '@salesforce/apex/QuickbridgeMappingFacade.clearMappings';
 import getDeploymentStatus from '@salesforce/apex/QuickbridgeMappingFacade.getDeploymentStatus';
+import reviewMappingOperation from '@salesforce/apex/QuickbridgeMappingFacade.reviewMappingOperation';
+import canManageMappings from '@salesforce/customPermission/Manage_QuickBridge';
 import QuickBridgeLogo from '@salesforce/resourceUrl/QuickBridge_Logo';
 
 const SESSION_ERROR_MARKERS = ['session is required', 'session is invalid', 'session expired', 'log in again'];
@@ -50,6 +52,62 @@ export default class QuickbridgeConfigPanel extends LightningElement {
   mappingLoading = false;
   mappingSaving = false;
   mappingError;
+  mappingAnalysis;
+  mappingAnalysisLoading = false;
+  mappingAnalysisError;
+  analysisSignature;
+  analysisGeneration = 0;
+  analysisTimer;
+
+  get assistantOperation() { return this.selectedMappingOperation; }
+  get assistantCanApply() { return Boolean(canManageMappings) && !this.mappingSaving && !this.mappingPending && !this.mappingAnalysisLoading; }
+  analysisRequest() {
+    const operation = this.selectedMappingOperation;
+    if (!this.isMapping || !operation || !this.mappingWorkspace || !this.sessionToken) return null;
+    return { connectorKey: this.mappingWorkspace.connectorKey, operationKey: operation.operationKey,
+      operationDirection: operation.direction, rows: operation.mappings.map((row) => ({
+        salesforceField: row.salesforceField, externalPath: row.externalPath, direction: row.direction,
+        active: row.active, isLine: row.isLine, salesforceObject: row.salesforceObject
+      })) };
+  }
+  renderedCallback() {
+    const request = this.analysisRequest();
+    const signature = request ? JSON.stringify(request) : null;
+    if (signature === this.analysisSignature) return;
+    this.analysisSignature = signature;
+    this.analysisGeneration += 1;
+    clearTimeout(this.analysisTimer);
+    this.mappingAnalysis = undefined;
+    this.mappingAnalysisError = undefined;
+    this.mappingAnalysisLoading = Boolean(request);
+    if (request) {
+      // eslint-disable-next-line @lwc/lwc/no-async-operation
+      this.analysisTimer = setTimeout(() => this.refreshMappingAnalysis(), 300);
+    }
+  }
+  disconnectedCallback() { clearTimeout(this.analysisTimer); this.analysisGeneration += 1; }
+  async refreshMappingAnalysis() {
+    clearTimeout(this.analysisTimer);
+    const request = this.analysisRequest();
+    if (!request) return;
+    const signature = JSON.stringify(request);
+    const generation = ++this.analysisGeneration;
+    this.mappingAnalysisLoading = true;
+    this.mappingAnalysisError = undefined;
+    try {
+      const result = await reviewMappingOperation({ sessionToken: this.sessionToken, requestJson: signature });
+      if (generation !== this.analysisGeneration || signature !== JSON.stringify(this.analysisRequest())) return;
+      this.mappingAnalysis = result;
+    } catch (error) {
+      if (generation !== this.analysisGeneration) return;
+      this.mappingAnalysis = undefined;
+      this.mappingAnalysisError = this.messageFrom(error);
+      this.handleSessionError(error);
+    } finally {
+      if (generation === this.analysisGeneration) this.mappingAnalysisLoading = false;
+    }
+  }
+
   get mappingDirty() {
     return Boolean(this.selectedMappingOperation?._mappingDirty || this.selectedMappingOperation?._settingDirty);
   }
@@ -364,7 +422,34 @@ export default class QuickbridgeConfigPanel extends LightningElement {
   changeMapping(event) { const index = Number(event.currentTarget.dataset.index); const field = event.currentTarget.dataset.field; const value = field === 'active' ? event.target.checked : event.detail?.value ?? event.target.value; const operation = this.selectedMappingOperation; this.replaceOperation({ ...operation, mappings: operation.mappings.map((row, rowIndex) => (rowIndex === index ? { ...row, [field]: value, dirty: true } : row)) }); this.mappingDirty = true; }
   removeMapping(event) { const index = Number(event.currentTarget.dataset.index); const operation = this.selectedMappingOperation; this.replaceOperation({ ...operation, mappings: operation.mappings.filter((row, rowIndex) => rowIndex !== index) }); this.mappingDirty = true; }
   replaceOperation(replacement) { this.mappingWorkspace = { ...this.mappingWorkspace, operations: this.mappingWorkspace.operations.map((item) => (item.workspaceKey === replacement.workspaceKey ? replacement : item)) }; }
-  applySuggestions(event) { const byOperation = new Map(); (event.detail || []).forEach((suggestion) => { if (!byOperation.has(suggestion.workspaceKey)) byOperation.set(suggestion.workspaceKey, []); byOperation.get(suggestion.workspaceKey).push(suggestion); }); this.mappingWorkspace = { ...this.mappingWorkspace, operations: this.mappingWorkspace.operations.map((operation) => { const suggestions = byOperation.get(operation.workspaceKey) || []; if (!suggestions.length) return operation; return { ...operation, _mappingDirty: true, mappings: [...operation.mappings, ...suggestions.map((item, index) => this.decorateMappingRow({ salesforceField: item.salesforceField, externalPath: item.externalPath, direction: operation.direction, active: true, source: 'New', isLine: false, salesforceObject: operation.salesforceObject }, operation.mappings.length + index))] }; }) }; this.mappingDirty = true; }
+  applySuggestions(event) {
+    const operation = this.selectedMappingOperation;
+    const detail = event.detail;
+    if (!operation || !this.assistantCanApply || detail?.workspaceKey !== operation.workspaceKey ||
+        this.mappingAnalysis?.workspaceKey !== operation.workspaceKey ||
+        this.mappingAnalysis?.connectorKey !== this.mappingWorkspace.connectorKey) return;
+    const offered = new Map((this.mappingAnalysis.suggestions || []).filter((item) => item.canApply).map((item) => [item.key, item]));
+    const additions = [];
+    const occupied = [...operation.mappings];
+    for (const selected of detail.suggestions || []) {
+      const item = offered.get(selected.key);
+      if (!item || item.workspaceKey !== operation.workspaceKey) continue;
+      const normalized = (value) => String(value || '').toLowerCase();
+      const duplicate = occupied.some((row) =>
+        normalized(row.salesforceObject || operation.salesforceObject) === normalized(item.salesforceObject) &&
+        (row.direction === item.direction || ['Both', 'Bidirectional'].includes(row.direction) || ['Both', 'Bidirectional'].includes(item.direction)) &&
+        (normalized(row.salesforceField) === normalized(item.salesforceField) || normalized(row.externalPath) === normalized(item.externalPath)));
+      if (duplicate) continue;
+      const row = this.decorateMappingRow({ salesforceField: item.salesforceField, externalPath: item.externalPath,
+        direction: operation.direction, active: true, source: 'New', isLine: item.isLine === true,
+        salesforceObject: item.salesforceObject, collectionPath: item.collectionPath
+      }, operation.mappings.length + additions.length);
+      occupied.push(row); additions.push(row);
+    }
+    if (!additions.length) return;
+    this.replaceOperation({ ...operation, _mappingDirty: true, mappings: [...operation.mappings, ...additions] });
+    this.toast('Suggestions applied', 'Review the draft, then use Save Mappings to persist it.', 'info');
+  }
   async saveMappingWorkspace() {
     const operation = this.selectedMappingOperation;
     if (!operation || this.mappingSaveDisabled) return;

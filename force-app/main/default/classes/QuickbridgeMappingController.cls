@@ -240,6 +240,9 @@ public with sharing class QuickbridgeMappingController {
     Set<String> identities = new Set<String>();
     Integer submitted = 0;
     for (MappingInput row : request.rows) {
+      if (String.isNotBlank(request.operationDirection)) {
+        row.direction = request.operationDirection;
+      }
       String targetObj = (row.isLine == true && String.isNotBlank(row.salesforceObject))
         ? row.salesforceObject
         : request.salesforceObject;
@@ -247,7 +250,7 @@ public with sharing class QuickbridgeMappingController {
       if (targetFields == null) {
         targetFields = fields;
       }
-      validateRow(row, targetFields, targetObj);
+      validateRow(row, targetFields, targetObj, request.operationDirection);
       String identity = mappingIdentity(request, row);
       if (!identities.add(identity)) {
         throw handled('Duplicate mapping rows are not allowed.');
@@ -320,7 +323,7 @@ public with sharing class QuickbridgeMappingController {
       ) continue;
       Metadata.CustomMetadata record = new Metadata.CustomMetadata();
       record.fullName = 'Field_Mapping__mdt.' + row.DeveloperName;
-      record.label = row.DeveloperName.left(80);
+      record.label = row.DeveloperName.left(40);
       addValue(record, 'Is_Active__c', false);
       container.addMetadata(record);
       submitted++;
@@ -419,11 +422,12 @@ public with sharing class QuickbridgeMappingController {
       throw handled('The selected Salesforce object is not accessible.');
     }
     item.salesforceObjectLabel = describeResult.getLabel();
+    Boolean allowCalculated = (item.direction == 'Outbound');
     for (Schema.SObjectField fieldToken : describeResult.fields.getMap().values()) {
       Schema.DescribeFieldResult field = fieldToken.getDescribe();
       if (
         field.isAccessible() &&
-        !field.isCalculated() &&
+        (allowCalculated || !field.isCalculated()) &&
         field.getType() != Schema.DisplayType.Address &&
         field.getType() != Schema.DisplayType.Location
       ) {
@@ -460,7 +464,7 @@ public with sharing class QuickbridgeMappingController {
           Schema.DescribeFieldResult field = fieldToken.getDescribe();
           if (
             field.isAccessible() &&
-            !field.isCalculated() &&
+            (allowCalculated || !field.isCalculated()) &&
             field.getType() != Schema.DisplayType.Address &&
             field.getType() != Schema.DisplayType.Location
           ) {
@@ -495,6 +499,13 @@ public with sharing class QuickbridgeMappingController {
         mapping.salesforceField = stripNamespace(row.Salesforce_Field__c);
         mapping.externalPath = row.External_Path__c;
         mapping.direction = normalizeDirection(row.Direction__c);
+        if (
+          mapping.direction != 'Both' &&
+          mapping.direction != item.direction
+        ) continue;
+        if (item.direction == 'Outbound' || item.direction == 'Inbound') {
+          mapping.direction = item.direction;
+        }
         mapping.active = true;
         mapping.required = row.Required__c == true;
         mapping.source = 'Default';
@@ -507,7 +518,7 @@ public with sharing class QuickbridgeMappingController {
           mapping.isLine = false;
           mapping.salesforceObject = stripNamespace(item.salesforceObject);
         }
-        byKey.put(rowKey(mapping.salesforceObject, mapping.salesforceField, mapping.direction), mapping);
+        byKey.put(rowKey(mapping.salesforceObject, mapping.salesforceField, item.direction), mapping);
         if (String.isNotBlank(mapping.externalPath)) externalPaths.add(mapping.externalPath);
       }
     }
@@ -533,6 +544,9 @@ public with sharing class QuickbridgeMappingController {
         mapping.direction != 'Both' &&
         mapping.direction != item.direction
       ) continue;
+      if (item.direction == 'Outbound' || item.direction == 'Inbound') {
+        mapping.direction = item.direction;
+      }
       mapping.active = row.Is_Active__c == true;
       mapping.required = false;
       mapping.source = 'Override';
@@ -546,7 +560,7 @@ public with sharing class QuickbridgeMappingController {
         mapping.salesforceObject = stripNamespace(item.salesforceObject);
       }
       if (mapping.active) {
-        byKey.put(rowKey(mapping.salesforceObject, mapping.salesforceField, mapping.direction), mapping);
+        byKey.put(rowKey(mapping.salesforceObject, mapping.salesforceField, item.direction), mapping);
       }
       if (String.isNotBlank(mapping.externalPath)) externalPaths.add(mapping.externalPath);
     }
@@ -589,7 +603,8 @@ public with sharing class QuickbridgeMappingController {
   private static void validateRow(
     MappingInput row,
     Map<String, Schema.SObjectField> fields,
-    String objectName
+    String objectName,
+    String operationDirection
   ) {
     if (row == null || !SUPPORTED_DIRECTIONS.contains(normalizeDirection(row.direction))) {
       throw handled('Mapping direction is invalid.');
@@ -603,7 +618,9 @@ public with sharing class QuickbridgeMappingController {
       throw handled('The selected Salesforce field is not accessible: ' + objectName + '.' + fieldName);
     }
     String direction = normalizeDirection(row.direction);
-    if (direction != 'Outbound' && !field.isCreateable() && !field.isUpdateable()) {
+    String opDirection = normalizeDirection(operationDirection);
+    Boolean isOutbound = (direction == 'Outbound' || opDirection == 'Outbound');
+    if (!isOutbound && !field.isCreateable() && !field.isUpdateable()) {
       throw handled('The selected Salesforce field is not editable: ' + objectName + '.' + fieldName);
     }
     if (
@@ -625,7 +642,7 @@ public with sharing class QuickbridgeMappingController {
     record.fullName = 'Field_Mapping__mdt.QB_' + digest(identity);
     record.label = (
       request.connectorKey + ' ' + request.operationKey + ' ' + row.salesforceField
-    ).left(80);
+    ).left(40);
     String sfFieldName = stripNamespace(row.salesforceField);
     String sfObjectName = (row.isLine == true && String.isNotBlank(row.salesforceObject))
       ? stripNamespace(row.salesforceObject)

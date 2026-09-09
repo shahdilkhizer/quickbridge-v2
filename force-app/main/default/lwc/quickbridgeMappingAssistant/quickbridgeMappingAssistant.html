@@ -1,9 +1,150 @@
 <template>
-  <aside class="assistant" aria-labelledby="assistant-title"><div class="heading"><div><h2 id="assistant-title">Mapping Assistant</h2><p>Deterministic schema and metadata analysis.</p></div><lightning-button-icon icon-name="utility:refresh" alternative-text="Refresh analysis" onclick={analyze}></lightning-button-icon></div>
-    <div class="score"><strong>{healthScore}%</strong><div><span>{healthLabel}</span><small>{requiredMappings} required mappings · {missingCount} missing</small></div></div>
-    <template lwc:if={hasMissing}><div class="warning"><strong>Missing required fields</strong><template for:each={missingRequired} for:item="field"><span key={field}>{field}</span></template></div></template>
-    <lightning-button label="Suggest Mappings" onclick={analyze} class="suggest"></lightning-button>
-    <template lwc:if={hasSuggestions}><div class="suggestions"><template for:each={suggestions} for:item="suggestion"><label key={suggestion.key}><lightning-input type="checkbox" variant="label-hidden" label="Select suggestion" checked={suggestion.selected} data-key={suggestion.key} onchange={toggle}></lightning-input><span><strong>{suggestion.salesforceField}</strong> → {suggestion.externalPath}</span><em>{suggestion.confidence}</em></label></template></div><div class="actions"><lightning-button label="Apply High Confidence" onclick={applyHigh}></lightning-button><lightning-button variant="brand" label="Apply Selected" onclick={applySelected}></lightning-button></div></template>
-    <div class="prompt"><label>Generate Fix Prompt</label><textarea readonly>{fixPrompt}</textarea></div>
+  <aside class="assistant-card">
+    <div class="assistant-header">
+      <div>
+        <p class="eyebrow">Mapping Assistant</p>
+        <h2>{displayConnectorLabel}</h2>
+        <p class="quiet-text">{contextLabel}</p>
+      </div>
+      <span class={statusClass}>{statusText}</span>
+    </div>
+
+    <template if:true={hasError}>
+      <div role="alert" class="error-state">{errorMessage}<button type="button" onclick={handleRefresh}>Retry analysis</button></div>
+    </template>
+
+    <template if:false={hasContext}>
+      <div class="empty-state">
+        Select an operation to analyze its mapping draft.
+      </div>
+    </template>
+
+    <template if:true={hasContext}>
+      <template if:true={isLoading}>
+        <div class="loading-state">
+          <lightning-spinner
+            alternative-text="Analyzing mappings"
+            size="small"
+          ></lightning-spinner>
+        </div>
+      </template>
+
+      <template if:true={hasAnalysis}>
+        <template if:true={limitedSchema}><div class="empty-state">Limited schema coverage. Unverified provider types are not treated as compatible.</div></template>
+        <section class="score-row">
+          <div class="score-value">{healthScore}</div>
+          <div>
+            <div class="score-label">Mapping health</div>
+            <div class="score-meta">
+              {requiredFieldsMapped}/{requiredFieldsTotal} required fields
+              mapped
+            </div>
+          </div>
+        </section>
+
+        <div class="action-grid">
+          <button type="button" onclick={handleRefresh}>
+            Refresh Analysis
+          </button>
+          <button type="button" onclick={handleSuggest}>
+            Suggest Mappings
+          </button>
+          <button
+            type="button"
+            onclick={handleApplySelected}
+            disabled={disableApplySelected}
+          >
+            Apply Selected
+          </button>
+          <button
+            type="button"
+            onclick={handleApplyHighConfidence}
+            disabled={disableApply}
+          >
+            Apply High Confidence
+          </button>
+        </div>
+
+        <section class="assistant-section">
+          <div class="section-title">Missing Required Fields</div>
+          <template if:true={hasMissingFields}>
+            <template for:each={missingRequiredFields} for:item="field">
+              <div key={field.key} class="insight-row">
+                <strong>{field.externalField}</strong>
+                <span>{field.message}</span>
+              </div>
+            </template>
+          </template>
+          <template if:false={hasMissingFields}>
+            <div class="quiet-text">No missing required fields detected.</div>
+          </template>
+        </section>
+
+        <section class="assistant-section">
+          <div class="section-title">Risk Warnings</div>
+          <template if:true={hasRisks}>
+            <template for:each={risks} for:item="risk">
+              <div key={risk.key} class="risk-row">
+                <span class="risk-severity">{risk.severity}</span>
+                <span>{risk.message}</span>
+              </div>
+            </template>
+          </template>
+          <template if:false={hasRisks}>
+            <div class="quiet-text">No mapping risks detected.</div>
+          </template>
+        </section>
+
+        <section class="assistant-section">
+          <div class="section-title">Suggested Mappings</div>
+          <template if:true={hasSuggestions}>
+            <template
+              for:each={suggestions}
+              for:item="suggestion"
+              for:index="index"
+            >
+              <label key={suggestion.key} class="suggestion-row">
+                <input
+                  type="checkbox"
+                  data-key={suggestion.key}
+                  checked={suggestion.selected}
+                  disabled={suggestion.disabled}
+                  onchange={handleSuggestionToggle}
+                />
+                <span class="suggestion-main">
+                  <span class="suggestion-fields">
+                    {suggestion.salesforceFieldLabel} ({suggestion.salesforceField}) →
+                    {suggestion.externalFieldLabel} ({suggestion.externalPath})
+                  </span>
+                  <span class="quiet-text">{suggestion.contextLabel}</span>
+                  <span class="suggestion-reason">{suggestion.reason}</span>
+                </span>
+                <span class={suggestion.confidenceClass}>
+                  {suggestion.confidenceLabel}
+                </span>
+              </label>
+            </template>
+          </template>
+          <template if:false={hasSuggestions}>
+            <div class="quiet-text">
+              No suggestions available for this context.
+            </div>
+          </template>
+        </section>
+
+        <section class="assistant-section prompt-section">
+          <button
+            type="button"
+            class="prompt-button"
+            onclick={handleGeneratePrompt}
+          >
+            Generate Fix Prompt
+          </button>
+          <template if:true={generatedPrompt}>
+            <textarea aria-label="Generated mapping fix prompt" readonly>{generatedPrompt}</textarea>
+          </template>
+        </section>
+      </template>
+    </template>
   </aside>
 </template>
