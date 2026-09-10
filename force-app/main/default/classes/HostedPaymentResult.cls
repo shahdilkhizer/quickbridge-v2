@@ -10,8 +10,10 @@ public inherited sharing class HostedPaymentResult {
   @AuraEnabled public String errorSummary { get; set; }
   @AuraEnabled public Integer httpStatusCode { get; set; }
   @AuraEnabled public Id invoiceRecordId { get; set; }
+  @AuraEnabled public Boolean reusedExisting { get; set; }
   public HostedPaymentResult() {
     successful = false;
     retryable = false;
+    reusedExisting = false;
   }
 }

@@ -41,7 +41,8 @@ public without sharing class StripeHostedPaymentAdapter
         'days_until_due' => String.valueOf(daysUntilDue(request.dueDate)),
         'description' => request.description,
         'metadata[sourceRecordId]' => String.valueOf(request.sourceRecordId),
-        'metadata[referenceNumber]' => request.referenceNumber
+        'metadata[referenceNumber]' => request.referenceNumber,
+        'pending_invoice_items_behavior' => 'include'
       }),
       'application/x-www-form-urlencoded', request.idempotencyKey + ':invoice'
     );

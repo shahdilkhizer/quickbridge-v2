@@ -3,9 +3,11 @@ private class HostedPaymentProviderTest {
   private class Transport implements ConnectorHttpClient.Transport {
     List<String> endpoints = new List<String>();
     List<String> bodies = new List<String>();
+    List<String> idempotencyKeys = new List<String>();
     public HttpResponse send(HttpRequest request) {
       endpoints.add(request.getEndpoint());
       bodies.add(request.getBody());
+      idempotencyKeys.add(request.getHeader('Idempotency-Key'));
       HttpResponse response = new HttpResponse();
       response.setStatusCode(200);
       response.setStatus('OK');
@@ -93,6 +95,125 @@ private class HostedPaymentProviderTest {
     System.assertEquals(false, sent.contains('cardnumber'));
     System.assertEquals(false, sent.contains('"cvv"'));
     ConnectorHttpClient.clearTestTransport();
+  }
+
+  @IsTest
+  static void stripeIncludesPendingItemInStandaloneInvoice() {
+    Transport transport = new Transport();
+    ConnectorHttpClient.setTestTransport(transport);
+    HostedPaymentRequest request = requestFor('stripe');
+    request.amount = 460;
+
+    HostedPaymentResult result;
+    try {
+      result = new StripeHostedPaymentAdapter().createHostedPayment(request);
+    } finally {
+      ConnectorHttpClient.clearTestTransport();
+    }
+
+    System.assertEquals(true, result.successful);
+    System.assertEquals(4, transport.endpoints.size());
+    System.assert(transport.endpoints[0].endsWith('/v1/customers'));
+    System.assert(transport.endpoints[1].endsWith('/v1/invoiceitems'));
+    System.assert(transport.endpoints[2].endsWith('/v1/invoices'));
+    System.assert(transport.endpoints[3].endsWith('/v1/invoices/in_test/finalize'));
+    System.assert(transport.bodies[1].contains('amount=46000'));
+    System.assert(
+      transport.bodies[2].contains('pending_invoice_items_behavior=include')
+    );
+    System.assertEquals(
+      new List<String>{
+        'stripe:test:customer',
+        'stripe:test:item',
+        'stripe:test:invoice',
+        'stripe:test:finalize'
+      },
+      transport.idempotencyKeys
+    );
+  }
+
+  @IsTest
+  static void paidStripeInvoiceBlocksHostedPaymentBeforeCallout() {
+    Order sourceOrder = paymentReadyOrder();
+    insert new Invoice__c(
+      Order__c = sourceOrder.Id,
+      Payment_Provider__c = 'stripe',
+      Provider_Reference__c = 'in_paid',
+      Hosted_Payment_URL__c = 'https://invoice.stripe.test/paid',
+      Status__c = 'Paid'
+    );
+    Transport transport = new Transport();
+    ConnectorHttpClient.setTestTransport(transport);
+
+    try {
+      HostedPaymentService.create('stripe', sourceOrder.Id);
+      System.assert(false, 'A paid invoice must block another hosted payment.');
+    } catch (AuraHandledException expected) {
+      System.assertEquals(
+        'A Stripe invoice for this record is already paid. A new payment cannot be created.',
+        expected.getMessage()
+      );
+    } finally {
+      ConnectorHttpClient.clearTestTransport();
+    }
+    System.assertEquals(0, transport.endpoints.size());
+  }
+
+  @IsTest
+  static void openStripeInvoiceReusesHostedPaymentWithoutCallout() {
+    Order sourceOrder = paymentReadyOrder();
+    Invoice__c existingInvoice = new Invoice__c(
+      Order__c = sourceOrder.Id,
+      Payment_Provider__c = 'stripe',
+      Provider_Reference__c = 'in_open',
+      Hosted_Payment_URL__c = 'https://invoice.stripe.test/open',
+      Status__c = 'Open'
+    );
+    insert existingInvoice;
+    Transport transport = new Transport();
+    ConnectorHttpClient.setTestTransport(transport);
+
+    HostedPaymentResult result;
+    try {
+      result = HostedPaymentService.create('stripe', sourceOrder.Id);
+    } finally {
+      ConnectorHttpClient.clearTestTransport();
+    }
+
+    System.assertEquals(true, result.successful);
+    System.assertEquals(true, result.reusedExisting);
+    System.assertEquals(existingInvoice.Id, result.invoiceRecordId);
+    System.assertEquals('in_open', result.providerReference);
+    System.assertEquals('https://invoice.stripe.test/open', result.hostedUrl);
+    System.assertEquals('REDIRECT', result.launchMode);
+    System.assertEquals(0, transport.endpoints.size());
+  }
+
+  @IsTest
+  static void newStripeHostedPaymentStillCreatesAndPersistsInvoice() {
+    Order sourceOrder = paymentReadyOrder();
+    Transport transport = new Transport();
+    ConnectorHttpClient.setTestTransport(transport);
+
+    HostedPaymentResult result;
+    try {
+      result = HostedPaymentService.create('stripe', sourceOrder.Id);
+    } finally {
+      ConnectorHttpClient.clearTestTransport();
+    }
+
+    System.assertEquals(true, result.successful);
+    System.assertEquals(false, result.reusedExisting);
+    System.assertNotEquals(null, result.invoiceRecordId);
+    System.assertEquals(4, transport.endpoints.size());
+    System.assertEquals(
+      1,
+      [
+        SELECT COUNT()
+        FROM Invoice__c
+        WHERE Id = :result.invoiceRecordId AND Order__c = :sourceOrder.Id
+      ]
+    );
   }
 
   @IsTest
@@ -280,6 +401,45 @@ private class HostedPaymentProviderTest {
     request.dueDate = Date.today().addDays(10);
     request.idempotencyKey = gateway + ':test';
     return request;
+  }
+
+  private static Order paymentReadyOrder() {
+    Account account = new Account(Name = 'Hosted Payment Account');
+    insert account;
+    Contact billToContact = new Contact(
+      AccountId = account.Id,
+      LastName = 'Hosted Payment Contact',
+      Email = 'hosted-payment@example.test'
+    );
+    insert billToContact;
+    Product2 product = new Product2(
+      Name = 'Hosted Payment Product',
+      IsActive = true
+    );
+    insert product;
+    Id standardPricebookId = Test.getStandardPricebookId();
+    PricebookEntry entry = new PricebookEntry(
+      Pricebook2Id = standardPricebookId,
+      Product2Id = product.Id,
+      UnitPrice = 12.34,
+      IsActive = true
+    );
+    insert entry;
+    Order sourceOrder = new Order(
+      AccountId = account.Id,
+      BillToContactId = billToContact.Id,
+      EffectiveDate = Date.today(),
+      Pricebook2Id = standardPricebookId,
+      Status = 'Draft'
+    );
+    insert sourceOrder;
+    insert new OrderItem(
+      OrderId = sourceOrder.Id,
+      PricebookEntryId = entry.Id,
+      Quantity = 1,
+      UnitPrice = 12.34
+    );
+    return sourceOrder;
   }
 
   private static Connector_Instance__c instance(

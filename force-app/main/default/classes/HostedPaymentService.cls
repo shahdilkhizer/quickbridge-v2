@@ -23,10 +23,19 @@ public with sharing class HostedPaymentService {
     }
     List<String> selectFields = new List<String>{ 'Id' };
     selectFields.addAll(sourceFields);
-    SObject sourceRecord = Database.query(
+    String sourceQuery =
       'SELECT ' + String.join(selectFields, ',') + ' FROM ' +
-      config.sourceObject + ' WHERE Id = :sourceRecordId WITH USER_MODE LIMIT 1'
-    );
+      config.sourceObject + ' WHERE Id = :sourceRecordId WITH USER_MODE LIMIT 1';
+    if (gateway == 'stripe') sourceQuery += ' FOR UPDATE';
+    SObject sourceRecord = Database.query(sourceQuery);
+    if (gateway == 'stripe') {
+      HostedPaymentResult existingPayment = existingStripePayment(
+        config,
+        sourceRecordId,
+        gateway
+      );
+      if (existingPayment != null) return existingPayment;
+    }
     Map<String, Object> mapped = new Map<String, Object>();
     for (PaymentInvoiceMappingController.MappingRow row : config.sourceMappings) {
       mapped.put(row.targetField, valueAt(sourceRecord, row.sourceField));
@@ -72,6 +81,142 @@ public with sharing class HostedPaymentService {
       throw handled('Mapped amount and customer email values are required.');
     }
     return request;
+  }
+
+  private class ExistingInvoiceFields {
+    String sourceLookupField;
+    String paymentProviderField;
+    String statusField;
+    String providerReferenceField;
+    String hostedUrlField;
+  }
+
+  private static HostedPaymentResult existingStripePayment(
+    PaymentInvoiceMappingController.GatewayMappingConfig config,
+    Id sourceRecordId,
+    String gateway
+  ) {
+    ExistingInvoiceFields fields = existingInvoiceFields(config);
+    SObject paidInvoice = findExistingInvoice(
+      config,
+      fields,
+      sourceRecordId,
+      gateway,
+      true
+    );
+    if (paidInvoice != null) {
+      throw handled(
+        'A Stripe invoice for this record is already paid. A new payment cannot be created.'
+      );
+    }
+
+    SObject existingInvoice = findExistingInvoice(
+      config,
+      fields,
+      sourceRecordId,
+      gateway,
+      false
+    );
+    if (existingInvoice == null) return null;
+
+    String status = stringValue(existingInvoice.get(fields.statusField));
+    String hostedUrl = stringValue(existingInvoice.get(fields.hostedUrlField));
+    if ('Open'.equalsIgnoreCase(status) && String.isNotBlank(hostedUrl)) {
+      HostedPaymentResult result = new HostedPaymentResult();
+      result.successful = true;
+      result.reusedExisting = true;
+      result.invoiceRecordId = (Id) existingInvoice.get('Id');
+      result.providerReference = stringValue(
+        existingInvoice.get(fields.providerReferenceField)
+      );
+      result.status = status;
+      result.hostedUrl = hostedUrl;
+      result.launchMode = 'REDIRECT';
+      return result;
+    }
+
+    if ('Open'.equalsIgnoreCase(status)) {
+      throw handled(
+        'An existing Stripe invoice is open but has no hosted payment URL. A new payment cannot be created.'
+      );
+    }
+    throw handled(
+      'An existing Stripe invoice is ' +
+      (String.isBlank(status) ? 'unavailable' : status) +
+      '. Resolve that invoice before creating a new payment.'
+    );
+  }
+
+  private static SObject findExistingInvoice(
+    PaymentInvoiceMappingController.GatewayMappingConfig config,
+    ExistingInvoiceFields fields,
+    Id sourceRecordId,
+    String gateway,
+    Boolean paidOnly
+  ) {
+    String query =
+      'SELECT Id,' + fields.statusField + ',' + fields.providerReferenceField +
+      ',' + fields.hostedUrlField + ' FROM ' + config.invoiceObject +
+      ' WHERE ' + fields.sourceLookupField + ' = :sourceRecordId AND ' +
+      fields.paymentProviderField + ' = :gateway';
+    if (paidOnly) query += ' AND ' + fields.statusField + ' = \'Paid\'';
+    query += ' WITH USER_MODE ORDER BY CreatedDate DESC LIMIT 1';
+    List<SObject> invoices = Database.query(query);
+    return invoices.isEmpty() ? null : invoices[0];
+  }
+
+  private static ExistingInvoiceFields existingInvoiceFields(
+    PaymentInvoiceMappingController.GatewayMappingConfig config
+  ) {
+    if (config == null || String.isBlank(config.invoiceObject)) {
+      throw handled('The mapped invoice object is unavailable.');
+    }
+    Schema.SObjectType invoiceType = Schema.getGlobalDescribe().get(config.invoiceObject);
+    if (invoiceType == null || !invoiceType.getDescribe().isAccessible()) {
+      throw handled('The mapped invoice object is unavailable.');
+    }
+    Map<String, String> mappedFields = new Map<String, String>();
+    for (PaymentInvoiceMappingController.MappingRow row : config.invoiceMappings) {
+      if (row != null && String.isNotBlank(row.sourceField) &&
+          String.isNotBlank(row.targetField)) {
+        mappedFields.put(row.sourceField, row.targetField);
+      }
+    }
+    Map<String, Schema.SObjectField> fields = invoiceType.getDescribe().fields.getMap();
+    ExistingInvoiceFields result = new ExistingInvoiceFields();
+    result.sourceLookupField = requireInvoiceField(
+      fields,
+      config.invoiceSourceLookupField
+    );
+    result.paymentProviderField = requireInvoiceField(
+      fields,
+      mappedFields.get('paymentProvider')
+    );
+    result.statusField = requireInvoiceField(fields, mappedFields.get('status'));
+    result.providerReferenceField = requireInvoiceField(
+      fields,
+      mappedFields.get('providerReference')
+    );
+    result.hostedUrlField = requireInvoiceField(
+      fields,
+      mappedFields.get('hostedPaymentUrl')
+    );
+    return result;
+  }
+
+  private static String requireInvoiceField(
+    Map<String, Schema.SObjectField> fields,
+    String configuredName
+  ) {
+    if (fields != null && String.isNotBlank(configuredName)) {
+      for (String fieldName : fields.keySet()) {
+        if (fieldName.equalsIgnoreCase(configuredName)) {
+          Schema.DescribeFieldResult describeResult = fields.get(fieldName).getDescribe();
+          if (describeResult.isAccessible()) return describeResult.getName();
+        }
+      }
+    }
+    throw handled('The payment invoice mappings are incomplete.');
   }
 
   private static Id persistInvoice(
