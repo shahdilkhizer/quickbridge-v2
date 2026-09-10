@@ -32,7 +32,14 @@ public inherited sharing class ConnectorAdapterAllowlist {
     'AuthorizeNetPaymentAdapter',
     'AuthorizeNetHostedPaymentAdapter',
     'AuthorizeNetWebhookEventHandler',
-    'PaymentWebhookWorkHandler'
+    'PaymentWebhookWorkHandler',
+    'MetadataConnectorHealthProbe',
+    'MetadataConnectorWorkAdapter',
+    'MetadataConnectorScheduleAdapter',
+    'MetadataConnectorWebhookAdapter',
+    'MetadataConnectorCarrierAdapter',
+    'MetadataConnectorPaymentAdapter',
+    'MetadataConnectorHostedPaymentAdapter'
   };
 
   public static Boolean isAllowed(String className) {

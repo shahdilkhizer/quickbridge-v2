@@ -1,5 +1,36 @@
 @RestResource(urlMapping='/quickbridge/webhooks/*')
 global without sharing class QuickbridgeWebhookRestResource {
+  @HttpGet
+  global static void challenge() {
+    RestRequest request = RestContext.request;
+    RestResponse response = RestContext.response;
+    String connectorKey = connectorFromUri(request == null ? null : request.requestURI);
+    try {
+      ConnectorReadinessService.Assessment readiness =
+        ConnectorReadinessService.assess(connectorKey, true);
+      if (!readiness.operationalReady) {
+        respond(response, 503, 'Connector is not ready.');
+        return;
+      }
+      Object adapter = ConnectorCapabilityRouter.webhookHandler(connectorKey);
+      if (!(adapter instanceof WebhookChallengeHandler)) {
+        respond(response, 404, 'Webhook challenge is not supported.');
+        return;
+      }
+      WebhookChallengeResult result =
+        ((WebhookChallengeHandler) adapter).handleChallenge(request.params);
+      if (result == null || result.successful != true) {
+        respond(response, result == null ? 400 : result.statusCode, 'Webhook challenge failed.');
+        return;
+      }
+      response.statusCode = 200;
+      response.addHeader('Content-Type', 'text/plain');
+      response.responseBody = Blob.valueOf(result.responseBody);
+    } catch (Exception failure) {
+      respond(response, 400, 'Webhook challenge could not be processed.');
+    }
+  }
+
   @HttpPost
   global static void receive() {
     RestRequest request = RestContext.request;

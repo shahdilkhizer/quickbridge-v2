@@ -90,8 +90,19 @@ public inherited sharing class ConnectorHealthProbeSupport {
       return null;
     }
     for (String segment : path.split('\\.')) {
-      if (!(current instanceof Map<String, Object>)) return null;
-      current = ((Map<String, Object>) current).get(segment);
+      if (current instanceof Map<String, Object>) {
+        current = ((Map<String, Object>) current).get(segment);
+      } else if (
+        current instanceof List<Object> &&
+        Pattern.matches('^[0-9]{1,4}$', segment)
+      ) {
+        Integer index = Integer.valueOf(segment);
+        List<Object> values = (List<Object>) current;
+        if (index < 0 || index >= values.size()) return null;
+        current = values[index];
+      } else {
+        return null;
+      }
     }
     return current;
   }

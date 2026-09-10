@@ -14,6 +14,7 @@ public with sharing class ConnectorConfigService {
         Active__c,
         Environment__c,
         Health_Status__c,
+        Adapter_Mode__c,
         Named_Credential__c,
         External_Credential__c,
         Last_Health_Check_At__c

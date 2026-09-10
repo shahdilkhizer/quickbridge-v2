@@ -3,6 +3,13 @@ public abstract without sharing class MetadataIntegrationWorkHandler
   protected abstract String connectorKey();
 
   public ConnectorExecutionResult handle(Integration_Work_Item__c item) {
+    return handleForConnector(connectorKey(), item);
+  }
+
+  public static ConnectorExecutionResult handleForConnector(
+    String connectorKey,
+    Integration_Work_Item__c item
+  ) {
     if (item == null || String.isBlank(item.Operation__c)) {
       return ConnectorExecutionResult.failed(
         'Integration work item and operation are required.',
@@ -10,7 +17,7 @@ public abstract without sharing class MetadataIntegrationWorkHandler
         null
       );
     }
-    if (!normalize(item.Integration__c).equals(normalize(connectorKey()))) {
+    if (!normalize(item.Integration__c).equals(normalize(connectorKey))) {
       return ConnectorExecutionResult.failed(
         'The work item does not belong to the selected connector.',
         false,
@@ -18,7 +25,7 @@ public abstract without sharing class MetadataIntegrationWorkHandler
       );
     }
 
-    ConnectorExecutionRequest request = requestFor(item);
+    ConnectorExecutionRequest request = requestFor(connectorKey, item);
     GenericIntegrationRuntime.OperationDefinition definition =
       GenericIntegrationRuntime.resolve(request);
     request.salesforceObject = definition.salesforceObject;
@@ -35,9 +42,16 @@ public abstract without sharing class MetadataIntegrationWorkHandler
   protected virtual ConnectorExecutionRequest requestFor(
     Integration_Work_Item__c item
   ) {
-    Integration_Operation__mdt operation = operationFor(item.Operation__c);
+    return requestFor(connectorKey(), item);
+  }
+
+  private static ConnectorExecutionRequest requestFor(
+    String connectorKey,
+    Integration_Work_Item__c item
+  ) {
+    Integration_Operation__mdt operation = operationFor(connectorKey, item.Operation__c);
     ConnectorExecutionRequest request = new ConnectorExecutionRequest();
-    request.connectorKey = connectorKey();
+    request.connectorKey = connectorKey;
     request.operationKey = operation.Operation_Key__c;
     request.direction = normalizedDirection(operation.Direction__c);
     request.salesforceObject = operation.Salesforce_Object__c;
@@ -57,12 +71,15 @@ public abstract without sharing class MetadataIntegrationWorkHandler
     return request;
   }
 
-  private Integration_Operation__mdt operationFor(String operationKey) {
+  private static Integration_Operation__mdt operationFor(
+    String connectorKey,
+    String operationKey
+  ) {
     List<Integration_Operation__mdt> rows = [
       SELECT Operation_Key__c, Direction__c, Salesforce_Object__c,
         External_Entity__c, Request_Cardinality__c
       FROM Integration_Operation__mdt
-      WHERE Connector_Key__c = :connectorKey()
+      WHERE Connector_Key__c = :connectorKey
         AND Operation_Key__c = :operationKey
         AND Active__c = true
       LIMIT 1

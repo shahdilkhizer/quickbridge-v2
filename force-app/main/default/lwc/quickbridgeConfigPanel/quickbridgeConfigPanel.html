@@ -16,7 +16,7 @@
   </template>
 
   <template lwc:else>
-    <c-quickbridge-control-plane-shell current-screen={currentScreen} connector-label={selectedConnectorLabel} show-scheduler={showSchedulerNavigation} onnavigate={navigate} onback={backToIntegrations} onlogout={logout}>
+    <c-quickbridge-control-plane-shell current-screen={currentScreen} connector-label={selectedConnectorLabel} connector-status={selectedConnectorStatus} connector-health={selectedConnectorHealth} connector-last-run={selectedConnectorLastRun} connector-next-run={selectedConnectorNextRun} connector-schedule-state={selectedConnectorScheduleState} show-scheduler={showSchedulerNavigation} onnavigate={navigate} onback={backToIntegrations} onlogout={logout}>
       <template lwc:if={loading}><div class="page-loading"><lightning-spinner alternative-text="Loading Quickbridge"></lightning-spinner></div></template>
       <template lwc:if={hasExpiryAlert}><div class={expiryAlertClass} role="alert"><lightning-icon icon-name="utility:warning" size="x-small"></lightning-icon><div><strong>{expiryAlert.title}</strong><span>{expiryAlert.message}</span></div></div></template>
 

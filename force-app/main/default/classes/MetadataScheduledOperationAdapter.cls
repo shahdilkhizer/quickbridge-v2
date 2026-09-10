@@ -3,6 +3,13 @@ public abstract without sharing class MetadataScheduledOperationAdapter
   protected abstract String connectorKey();
 
   public ConnectorExecutionResult execute(Scheduled_Integration_Job__c job) {
+    return executeForConnector(connectorKey(), job);
+  }
+
+  public static ConnectorExecutionResult executeForConnector(
+    String connectorKey,
+    Scheduled_Integration_Job__c job
+  ) {
     if (job == null || job.Id == null || String.isBlank(job.Lease_Token__c)) {
       return ConnectorExecutionResult.failed(
         'A claimed scheduled integration job is required.',
@@ -10,9 +17,9 @@ public abstract without sharing class MetadataScheduledOperationAdapter
         null
       );
     }
-    Integration_Operation__mdt operation = resolveOperation(job);
+    Integration_Operation__mdt operation = resolveOperation(connectorKey, job);
     ConnectorExecutionRequest request = new ConnectorExecutionRequest();
-    request.connectorKey = connectorKey();
+    request.connectorKey = connectorKey;
     request.operationKey = operation.Operation_Key__c;
     request.direction = normalize(operation.Direction__c) == 'outbound'
       ? ConnectorExecutionRequest.DIRECTION_OUTBOUND
@@ -34,14 +41,15 @@ public abstract without sharing class MetadataScheduledOperationAdapter
     return result;
   }
 
-  private Integration_Operation__mdt resolveOperation(
+  private static Integration_Operation__mdt resolveOperation(
+    String connectorKey,
     Scheduled_Integration_Job__c job
   ) {
     List<Integration_Operation__mdt> operations = [
       SELECT Operation_Key__c, Direction__c, Salesforce_Object__c,
         External_Entity__c, Request_Cardinality__c
       FROM Integration_Operation__mdt
-      WHERE Connector_Key__c = :connectorKey()
+      WHERE Connector_Key__c = :connectorKey
         AND Active__c = true
     ];
     String requested = normalize(job.Source_Object__c);

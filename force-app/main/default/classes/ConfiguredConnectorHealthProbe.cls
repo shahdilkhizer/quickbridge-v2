@@ -6,7 +6,7 @@ public abstract inherited sharing class ConfiguredConnectorHealthProbe
   protected virtual String identityPath() { return null; }
   protected virtual String expectedIdentityConfigKey() { return null; }
 
-  public ConnectorHealthProbeResult probe(
+  public virtual ConnectorHealthProbeResult probe(
     Connector_Instance__c connectorInstance
   ) {
     try {

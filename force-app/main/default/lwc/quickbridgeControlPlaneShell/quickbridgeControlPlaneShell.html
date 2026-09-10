@@ -1,21 +1,37 @@
 <template>
-  <div class="shell">
+  <div class={shellClass}>
     <aside class="sidebar" aria-label="Quickbridge administration">
-      <div class="brand"><lightning-icon icon-name="utility:connected_apps" size="small"></lightning-icon><div><strong>Quickbridge</strong><span>Configuration Panel</span></div></div>
-      <nav>
-        <button class={integrationsClass} data-screen="integrations" onclick={navigate}><lightning-icon icon-name="utility:apps" size="x-small"></lightning-icon><span>Integrations</span></button>
-        <button class={reportingClass} data-screen="reporting" onclick={navigate}><lightning-icon icon-name="utility:chart" size="x-small"></lightning-icon><span>Reporting</span></button>
-        <button class={errorsClass} data-screen="errors" onclick={navigate}><lightning-icon icon-name="utility:error" size="x-small"></lightning-icon><span>Error Log</span></button>
-        <button class={mappingClass} data-screen="mapping" onclick={navigate}><lightning-icon icon-name="utility:merge_field" size="x-small"></lightning-icon><span>Field Mapping</span></button>
-        <button class={settingsClass} data-screen="settings" onclick={navigate}><lightning-icon icon-name="utility:settings" size="x-small"></lightning-icon><span>Settings</span></button>
-        <template lwc:if={showScheduler}><button class={schedulerClass} data-screen="scheduler" onclick={navigate}><lightning-icon icon-name="utility:date_time" size="x-small"></lightning-icon><span>Scheduler</span></button></template>
+      <div class="brand-header">
+        <div class="brand"><lightning-icon icon-name="utility:connected_apps" alternative-text="Quickbridge" size="small"></lightning-icon><div><strong>Quickbridge</strong><span>Configuration Panel</span></div></div>
+        <button class="sidebar-toggle" type="button" onclick={toggleSidebar} aria-controls="quickbridge-navigation" aria-expanded={sidebarExpanded} aria-label={sidebarToggleLabel} title={sidebarToggleLabel}><lightning-icon icon-name={sidebarToggleIcon} alternative-text="" size="x-small"></lightning-icon></button>
+      </div>
+      <nav id="quickbridge-navigation">
+        <button class={integrationsClass} data-screen="integrations" onclick={navigate} aria-label="Integrations" title="Integrations"><lightning-icon icon-name="utility:apps" size="x-small"></lightning-icon><span>Integrations</span></button>
+        <button class={reportingClass} data-screen="reporting" onclick={navigate} aria-label="Reporting" title="Reporting"><lightning-icon icon-name="utility:chart" size="x-small"></lightning-icon><span>Reporting</span></button>
+        <button class={errorsClass} data-screen="errors" onclick={navigate} aria-label="Error Log" title="Error Log"><lightning-icon icon-name="utility:error" size="x-small"></lightning-icon><span>Error Log</span></button>
+        <button class={mappingClass} data-screen="mapping" onclick={navigate} aria-label="Field Mapping" title="Field Mapping"><lightning-icon icon-name="utility:merge_field" size="x-small"></lightning-icon><span>Field Mapping</span></button>
+        <button class={settingsClass} data-screen="settings" onclick={navigate} aria-label="Settings" title="Settings"><lightning-icon icon-name="utility:settings" size="x-small"></lightning-icon><span>Settings</span></button>
+        <template lwc:if={showScheduler}><button class={schedulerClass} data-screen="scheduler" onclick={navigate} aria-label="Scheduler" title="Scheduler"><lightning-icon icon-name="utility:date_time" size="x-small"></lightning-icon><span>Scheduler</span></button></template>
       </nav>
       <div class="sidebar-bottom">
-        <template lwc:if={hasConnector}><button class="nav-item" onclick={back}><lightning-icon icon-name="utility:back" size="x-small"></lightning-icon><span>Back</span></button></template>
-        <button class="nav-item" onclick={logout}><lightning-icon icon-name="utility:logout" size="x-small"></lightning-icon><span>Logout</span></button>
+        <template lwc:if={hasConnector}><button class="nav-item" onclick={back} aria-label="Back to Integrations" title="Back to Integrations"><lightning-icon icon-name="utility:back" size="x-small"></lightning-icon><span>Back</span></button></template>
+        <button class="nav-item" onclick={logout} aria-label="Logout" title="Logout"><lightning-icon icon-name="utility:logout" size="x-small"></lightning-icon><span>Logout</span></button>
         <small>Product of The Lodestone Group</small>
       </div>
     </aside>
-    <main class="workspace"><slot></slot></main>
+    <main class="workspace">
+      <header class="workspace-context" aria-label="Workspace context">
+        <div class="context-item context-section"><span>Section</span><strong>{currentScreenLabel}</strong></div>
+        <template lwc:if={hasConnector}>
+          <div class="context-item"><span>Connector</span><strong>{connectorLabel}</strong></div>
+          <div class="context-item"><span>Operational state</span><strong>{connectorStatusLabel}</strong></div>
+          <div class="context-item"><span>Health</span><strong>{connectorHealthLabel}</strong></div>
+          <div class="context-item"><span>Last run</span><template lwc:if={hasLastRun}><lightning-formatted-date-time value={connectorLastRun}></lightning-formatted-date-time></template><template lwc:else><strong>Not yet run</strong></template></div>
+          <div class="context-item"><span>Next run</span><template lwc:if={hasNextRun}><lightning-formatted-date-time value={connectorNextRun}></lightning-formatted-date-time></template><template lwc:else><strong>Not scheduled</strong></template></div>
+          <div class="context-item"><span>Schedule state</span><strong>{connectorScheduleStateLabel}</strong></div>
+        </template>
+      </header>
+      <slot></slot>
+    </main>
   </div>
 </template>

@@ -2,7 +2,12 @@ public inherited sharing class ConnectorCapabilityRouter {
   @TestVisible
   private static Map<String, String> testAdapterByCapability =
     new Map<String, String>();
-  private static Map<String, String> adapterByCapability;
+  private static Map<String, AdapterDefinition> adapterByCapability;
+
+  private class AdapterDefinition {
+    String legacyClassName;
+    String dynamicClassName;
+  }
 
   public static ConnectorHealthProbe healthProbe(String connectorKey) {
     Object adapter = instantiate(connectorKey, 'health.probe');
@@ -101,7 +106,11 @@ public inherited sharing class ConnectorCapabilityRouter {
     if (adapterType == null) {
       throw new ConnectorCapabilityException('Configured adapter class is unavailable.');
     }
-    return adapterType.newInstance();
+    Object adapter = adapterType.newInstance();
+    if (adapter instanceof ConnectorBoundAdapter) {
+      ((ConnectorBoundAdapter) adapter).bindConnector(safeConnector);
+    }
+    return adapter;
   }
 
   private static String adapterClassName(String connectorKey, String capabilityKey) {
@@ -110,7 +119,7 @@ public inherited sharing class ConnectorCapabilityRouter {
       return testAdapterByCapability.get(cacheKey);
     }
     if (adapterByCapability == null) {
-      adapterByCapability = new Map<String, String>();
+      adapterByCapability = new Map<String, AdapterDefinition>();
       Set<String> enabledConnectors = new Set<String>();
       for (Integration_Connector__mdt connector : [
         SELECT Connector_Key__c
@@ -120,23 +129,63 @@ public inherited sharing class ConnectorCapabilityRouter {
         enabledConnectors.add(normalize(connector.Connector_Key__c));
       }
       for (Integration_Connector_Capability__mdt capability : [
-        SELECT Connector_Key__c, Capability_Key__c, Adapter_Class__c
+        SELECT Connector_Key__c, Capability_Key__c, Adapter_Class__c,
+          Dynamic_Adapter_Class__c
         FROM Integration_Connector_Capability__mdt
         WHERE Enabled__c = true
       ]) {
         String connectorValue = normalize(capability.Connector_Key__c);
         if (
           enabledConnectors.contains(connectorValue) &&
-          String.isNotBlank(capability.Adapter_Class__c)
+          (
+            String.isNotBlank(capability.Adapter_Class__c) ||
+            String.isNotBlank(capability.Dynamic_Adapter_Class__c)
+          )
         ) {
+          AdapterDefinition definition = new AdapterDefinition();
+          definition.legacyClassName = String.isBlank(capability.Adapter_Class__c)
+            ? null
+            : capability.Adapter_Class__c.trim();
+          definition.dynamicClassName = String.isBlank(
+            capability.Dynamic_Adapter_Class__c
+          )
+            ? null
+            : capability.Dynamic_Adapter_Class__c.trim();
           adapterByCapability.put(
             connectorValue + ':' + normalize(capability.Capability_Key__c),
-            capability.Adapter_Class__c.trim()
+            definition
           );
         }
       }
     }
-    return adapterByCapability.get(cacheKey);
+    AdapterDefinition definition = adapterByCapability.get(cacheKey);
+    return definition == null
+      ? null
+      : selectAdapterClass(
+        definition.legacyClassName,
+        definition.dynamicClassName,
+        adapterMode(connectorKey)
+      );
+  }
+
+  @TestVisible
+  private static String selectAdapterClass(
+    String legacyClassName,
+    String dynamicClassName,
+    String adapterMode
+  ) {
+    return normalize(adapterMode) == 'dynamic'
+      ? (String.isBlank(dynamicClassName) ? null : dynamicClassName.trim())
+      : (String.isBlank(legacyClassName) ? null : legacyClassName.trim());
+  }
+
+  private static String adapterMode(String connectorKey) {
+    Connector_Instance__c instanceRecord = ConnectorConfigService.getInstance(
+      connectorKey
+    );
+    return instanceRecord == null || String.isBlank(instanceRecord.Adapter_Mode__c)
+      ? 'Legacy'
+      : instanceRecord.Adapter_Mode__c;
   }
 
   @TestVisible

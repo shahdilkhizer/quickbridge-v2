@@ -131,6 +131,11 @@ export default class QuickbridgeConfigPanel extends LightningElement {
   get availableToggleLabel() { return this.availableProductsVisible ? 'Hide Available Products' : 'Show Available Products'; }
   get selectedConnector() { return this.connectors.find((item) => item.key === this.selectedConnectorKey); }
   get selectedConnectorLabel() { return this.selectedConnector?.label; }
+  get selectedConnectorStatus() { return this.selectedConnector?.statusLabel; }
+  get selectedConnectorHealth() { return this.selectedConnector?.health; }
+  get selectedConnectorLastRun() { return this.selectedConnector?.lastRun; }
+  get selectedConnectorNextRun() { return this.selectedConnector?.nextRun; }
+  get selectedConnectorScheduleState() { return this.selectedConnector?.scheduleState; }
   get showSchedulerNavigation() { return this.selectedConnector?.hasScheduler === true; }
   get needsConnector() { return ['errors', 'mapping', 'settings', 'scheduler'].includes(this.currentScreen) && !this.selectedConnector; }
   get loginDisabled() { return this.loginLoading || !this.userId || !/^[0-9]{4}$/.test(this.pin); }
