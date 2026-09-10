@@ -26,6 +26,7 @@ public without sharing class IntegrationWorkService {
         Status__c,
         Coalesced_Count__c,
         Needs_Reprocess__c
+        ,Lifecycle_Action__c
       FROM Integration_Work_Item__c
       WHERE Unique_Key__c IN :requestByKey.keySet()
       FOR UPDATE
@@ -45,12 +46,16 @@ public without sharing class IntegrationWorkService {
         inserts.add(row);
         existingByKey.put(keyValue, row);
       } else {
+        if (row.Lifecycle_Action__c == 'ChildChanged' && request.lifecycleAction == 'Save') request.lifecycleAction = 'ChildChanged';
         Decimal coalescedCount = row.Coalesced_Count__c == null
           ? 0
           : row.Coalesced_Count__c;
         row.Coalesced_Count__c = coalescedCount + 1;
         if (row.Status__c == STATUS_PROCESSING) {
           row.Needs_Reprocess__c = true;
+          row.Lifecycle_Action__c = request.lifecycleAction;
+          row.Source_External_Id__c = request.sourceExternalId;
+          row.Payload__c = request.payload;
         } else {
           applyRequest(row, request, nowValue);
           row.Status__c = STATUS_PENDING;
@@ -281,6 +286,7 @@ public without sharing class IntegrationWorkService {
       ? null
       : String.valueOf(request.sourceRecordId);
     row.Source_External_Id__c = request.sourceExternalId;
+    row.Lifecycle_Action__c = request.lifecycleAction;
     row.Payload__c = request.payload;
     row.Payload_Hash__c = payloadHash(request.payload);
     row.Lock_Key__c = String.isBlank(request.lockKey)

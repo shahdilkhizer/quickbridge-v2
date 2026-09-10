@@ -1,20 +1,18 @@
 import { LightningElement, api } from 'lwc';
 import { CloseActionScreenEvent } from 'lightning/actions';
 import availableProviders from '@salesforce/apex/QuickbridgeCapabilityController.availableProviders';
-import submitPayment from '@salesforce/apex/QuickbridgeCapabilityController.submitPayment';
+import createHostedPayment from '@salesforce/apex/QuickbridgeCapabilityController.createHostedPayment';
 
 export default class QuickbridgePaymentAction extends LightningElement {
   @api recordId;
   providers = [];
   provider;
-  amount;
-  currency = 'USD';
   loading = true;
   message;
   error = false;
 
   connectedCallback() {
-    availableProviders({ capabilityKey: 'payment.checkout' })
+    availableProviders({ capabilityKey: 'payment.hosted' })
       .then((rows) => {
         this.providers = (rows || []).map((row) => ({ label: row.label, value: row.key }));
         this.provider = this.providers[0]?.value;
@@ -23,37 +21,50 @@ export default class QuickbridgePaymentAction extends LightningElement {
       .finally(() => { this.loading = false; });
   }
 
-  get disabled() { return this.loading || !this.provider || !this.recordId || !(Number(this.amount) > 0); }
+  get disabled() { return this.loading || !this.provider || !this.recordId; }
   get messageClass() { return this.error ? 'slds-notify slds-notify_alert slds-alert_error slds-m-bottom_small' : 'slds-notify slds-notify_alert slds-theme_success slds-m-bottom_small'; }
   handleProvider(event) { this.provider = event.detail.value; }
-  handleAmount(event) { this.amount = event.detail.value; }
-  handleCurrency(event) { this.currency = event.detail.value; }
   close() { this.dispatchEvent(new CloseActionScreenEvent()); }
 
   async initialize() {
     this.loading = true;
     this.message = null;
     try {
-      const result = await submitPayment({
+      const result = await createHostedPayment({
         connectorKey: this.provider,
-        sourceRecordId: this.recordId,
-        amount: Number(this.amount),
-        currencyCode: this.currency,
-        providerToken: null,
-        idempotencyKey: `${this.provider}:${this.recordId}:${this.amount}:${this.currency}`,
-        attributesJson: '{}',
-        action: 'initialize'
+        sourceRecordId: this.recordId
       });
-      if (!result?.successful) throw new Error(result?.errorSummary || 'Secure checkout could not be initialized.');
+      if (!result?.successful) throw new Error(result?.errorSummary || 'Hosted payment could not be created.');
       this.error = false;
-      this.message = result.requiresAction
-        ? 'The provider requires an additional secure browser step.'
-        : `Payment session ${result.providerReference || ''} initialized.`;
+      if (result.launchMode === 'POST_FORM') {
+        this.postHostedToken(result.hostedUrl, result.formToken);
+      } else if (result.hostedUrl) {
+        window.open(result.hostedUrl, '_blank', 'noopener,noreferrer');
+      } else {
+        throw new Error('The provider did not return a hosted payment URL.');
+      }
+      this.message = `Hosted payment ${result.providerReference || ''} created.`;
     } catch (failure) {
       this.setError(failure);
     } finally {
       this.loading = false;
     }
+  }
+
+  postHostedToken(url, token) {
+    if (!url || !token) throw new Error('The hosted form token is unavailable.');
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = url;
+    form.target = '_blank';
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'token';
+    input.value = token;
+    form.appendChild(input);
+    this.template.appendChild(form);
+    form.submit();
+    form.remove();
   }
 
   setError(failure) {

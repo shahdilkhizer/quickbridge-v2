@@ -131,11 +131,10 @@ private class IntegrationRecordSaveTest {
       mapping('netsuite', 'CustomerUpsert', 'Account', 'Name', null)
     });
     Account row = new Account(Name = 'Eligibility'); insert row;
-    System.assertEquals(1, workCount());
-    System.assertEquals('netsuite', [SELECT Integration__c FROM Integration_Work_Item__c LIMIT 1].Integration__c);
+    System.assertEquals(0, workCount(), 'Every connector must explicitly opt in.');
     System.assertEquals(false, IntegrationEventApi.supportsRecordSave('klaviyo', 'Inbound'));
     System.assertEquals(true, IntegrationEventApi.supportsRecordSave('shopify', 'Both'));
-    System.assertEquals(false, IntegrationEventApi.supportsRecordSave('netsuite', 'Outbound'));
+    System.assertEquals(true, IntegrationEventApi.supportsRecordSave('netsuite', 'Outbound'));
   }
 
   @IsTest static void turningOffDoesNotCancelQueuedOrManualWork() {
@@ -195,7 +194,9 @@ private class IntegrationRecordSaveTest {
     request.put('connectorKey', 'klaviyo'); request.put('operationKey', 'Profiles');
     request.put('externalObject', 'profile'); assertRejected(request);
     request.put('connectorKey', 'netsuite'); request.put('operationKey', 'CustomerUpsert');
-    request.put('operationDirection', 'Outbound'); request.put('externalObject', 'customer'); assertRejected(request);
+    request.put('operationDirection', 'Outbound'); request.put('externalObject', 'customer');
+    QuickbridgeMappingController.saveMappings(JSON.serialize(request));
+    System.assertNotEquals(null,QuickbridgeMappingController.lastSaveContainer,'Configured outbound connectors can opt in.');
     QuickbridgeAdminSecurity.bypassPermissionsForTests = false;
     User isolatedUser = new User(Alias='nosync', Email='nosync@example.test', EmailEncodingKey='UTF-8',
       LastName='NoSyncPermission', LanguageLocaleKey='en_US', LocaleSidKey='en_US',

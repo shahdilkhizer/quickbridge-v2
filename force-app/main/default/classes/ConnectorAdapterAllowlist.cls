@@ -2,6 +2,8 @@ public inherited sharing class ConnectorAdapterAllowlist {
   private static final Set<String> ALLOWED_CLASSES = new Set<String>{
     'QuickBooksHealthProbe',
     'ShopifyHealthProbe',
+    'InboundIntegrationHandler',
+    'OutboundIntegrationHandler',
     'NetSuiteHealthProbe',
     'NetSuiteIntegrationWorker',
     'NetSuiteScheduledOperationAdapter',
@@ -20,13 +22,17 @@ public inherited sharing class ConnectorAdapterAllowlist {
     'DHLCarrierAdapter',
     'StripeHealthProbe',
     'StripePaymentAdapter',
+    'StripeHostedPaymentAdapter',
     'StripeWebhookEventHandler',
     'PayPalHealthProbe',
     'PayPalPaymentAdapter',
+    'PayPalHostedPaymentAdapter',
     'PayPalWebhookEventHandler',
     'AuthorizeNetHealthProbe',
     'AuthorizeNetPaymentAdapter',
-    'AuthorizeNetWebhookEventHandler'
+    'AuthorizeNetHostedPaymentAdapter',
+    'AuthorizeNetWebhookEventHandler',
+    'PaymentWebhookWorkHandler'
   };
 
   public static Boolean isAllowed(String className) {

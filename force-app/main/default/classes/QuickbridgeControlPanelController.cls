@@ -177,8 +177,8 @@ public with sharing class QuickbridgeControlPanelController {
       item.displayOrder = definition.Display_Order__c;
       item.entitlementStatus = instance == null ? 'Available' : instance.Entitlement_Status__c;
       item.expiryDate = instance == null ? null : instance.Expiry_Date__c;
-      item.subscribed = instance != null && (instance.Entitlement_Status__c == 'Active' || instance.Entitlement_Status__c == 'Subscribed');
       item.active = instance != null && instance.Active__c;
+      item.subscribed = item.active;
       item.health = instance == null || String.isBlank(instance.Health_Status__c) ? 'Unknown' : instance.Health_Status__c;
       item.hasConfig = definition.Has_Config__c;
       item.hasMapping = definition.Has_Mapping__c;

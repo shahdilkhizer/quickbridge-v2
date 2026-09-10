@@ -16,6 +16,8 @@ public without sharing class IntegrationWorkProcessor
         Operation__c,
         Source_Object__c,
         Source_Salesforce_Id__c,
+        Source_External_Id__c,
+        Lifecycle_Action__c,
         Payload__c,
         Status__c,
         Processor_Token__c,
@@ -37,6 +39,12 @@ public without sharing class IntegrationWorkProcessor
 
     ConnectorExecutionRequest request = buildRequest(item);
     try {
+      if (item.Lifecycle_Action__c == 'InboundReplay') {
+        request.direction = 'Inbound';
+        GenericIntegrationRuntime.OperationDefinition inbound = GenericIntegrationRuntime.resolve(request);
+        IntegrationWorkService.complete(item.Id, request, GenericResourceLifecycle.replay(inbound, item.Source_External_Id__c));
+        return;
+      }
       if (
         ConnectorCapabilityRouter.hasCapability(
           item.Integration__c,
@@ -71,6 +79,18 @@ public without sharing class IntegrationWorkProcessor
         return;
       }
       request.validate();
+      GenericIntegrationRuntime.OperationDefinition definition = GenericIntegrationRuntime.resolve(request);
+      GenericResourceContract resource = GenericResourceContract.parse(definition.resourceContractJson);
+      if (item.Lifecycle_Action__c == 'Delete') {
+        IntegrationWorkService.complete(item.Id, request, GenericResourceLifecycle.deleteResource(definition, item.Source_External_Id__c));
+        return;
+      }
+      if (resource != null && item.Lifecycle_Action__c == 'ChildChanged' && resource.immutableCollections != null) {
+        List<SObject> parents = Database.queryWithBinds(GenericIntegrationRuntime.buildSourceQuery(definition,request),
+          new Map<String,Object>{'recordIds'=>request.recordIds}, AccessLevel.USER_MODE);
+        GenericResourceContract.require(parents.isEmpty() || parents[0].get(definition.salesforceExternalIdField) == null,
+          'This REST resource cannot update existing order lines. GraphQL is required; no remote update was sent.');
+      }
       Integer scopeSize = Math.max(1, Math.min(50, request.scopeSize));
       Id batchJobId = Database.executeBatch(
         new OutboundIntegrationHandler(request),

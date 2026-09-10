@@ -4,7 +4,10 @@
     <template lwc:if={message}><div class={messageClass} role="status">{message}</div></template>
     <lightning-combobox label="Carrier" value={provider} options={providers} onchange={handleProvider}></lightning-combobox>
     <lightning-combobox class="slds-m-top_small" label="Action" value={operation} options={operations} onchange={handleOperation}></lightning-combobox>
-    <p class="slds-text-body_small slds-text-color_weak slds-m-top_medium">Shipment data is assembled from the record's active carrier mappings. Mutation requests use a stable idempotency key.</p>
+    <template lwc:if={requiresShipment}><lightning-combobox class="slds-m-top_small" label="Carrier shipment" value={shipmentId} options={shipmentOptions} onchange={handleShipment} required></lightning-combobox></template>
+    <template lwc:if={showConfirmation}><section class="slds-box slds-m-top_small" aria-label="Validated address"><p>Review the corrected address before applying it. No record fields change until you confirm.</p><pre>{correctedAddressText}</pre><lightning-button label="Discard" onclick={discardAddress}></lightning-button><lightning-button class="slds-m-left_small" variant="brand" label="Apply validated address" onclick={confirmAddress}></lightning-button></section></template>
+    <template lwc:if={showRates}><section class="slds-box slds-m-top_small" aria-label="Rate quotes"><p class="slds-m-bottom_small">Select a returned rate to save it and apply its mapped fields.</p><template for:each={rateQuotes} for:item="quote"><div key={quote.id} class="slds-grid slds-grid_align-spread slds-p-vertical_x-small"><span>{quote.serviceName} — {quote.totalNetCharge} {quote.currencyCode}</span><lightning-button label="Select" data-id={quote.id} onclick={chooseRate}></lightning-button></div></template></section></template>
+    <p class="slds-text-body_small slds-text-color_weak slds-m-top_medium">Shipment requests are assembled from active carrier mappings. Mutations use a durable idempotency key; credentials remain in Salesforce External Credentials.</p>
     <div slot="footer">
       <lightning-button label="Cancel" onclick={close}></lightning-button>
       <lightning-button class="slds-m-left_small" variant="brand" label="Run action" onclick={run} disabled={disabled}></lightning-button>

@@ -5,6 +5,8 @@ public without sharing class IntegrationErrorLogService {
   public class Failure {
     public Id workItemId;
     public Id recordId;
+    public String sourceObject;
+    public String externalId;
     public String connectorKey;
     public String operationKey;
     public String category;
@@ -23,7 +25,7 @@ public without sharing class IntegrationErrorLogService {
     }
     Map<String, Failure> byReference = new Map<String, Failure>();
     for (Failure failure : failures) {
-      if (failure == null || failure.recordId == null) {
+      if (failure == null || (failure.recordId == null && String.isBlank(failure.externalId))) {
         continue;
       }
       byReference.put(referenceFor(failure), failure);
@@ -91,7 +93,7 @@ public without sharing class IntegrationErrorLogService {
     for (String referenceValue : rowByReference.keySet()) {
       Error_Log__c row = rowByReference.get(referenceValue);
       Failure failure = byReference.get(referenceValue);
-      if (row.Id == null) {
+      if (row.Id == null || failure.recordId == null) {
         continue;
       }
       String linkKey = String.valueOf(row.Id) + ':' + String.valueOf(failure.recordId);
@@ -137,6 +139,12 @@ public without sharing class IntegrationErrorLogService {
   public static String sanitizeForUser(String message) {
     return sanitize(message);
   }
+  public static void markExternalResolved(String connectorKey,String operationKey,String externalId) {
+    String reference = 'inbound:' + connectorKey + ':' + operationKey + ':' + externalId;
+    List<Error_Log__c> rows = [SELECT Id FROM Error_Log__c WHERE External_Reference__c = :reference];
+    for (Error_Log__c row : rows) { row.Retry_Status__c='Success'; row.Is_Retryable__c=false; }
+    if (!rows.isEmpty()) update rows;
+  }
 
   private static void applyFailure(
     Error_Log__c row,
@@ -151,8 +159,8 @@ public without sharing class IntegrationErrorLogService {
     row.Retry_Count__c = failure.retryCount == null ? 0 : failure.retryCount;
     row.Retry_Status__c = retryStatus(failure);
     row.Class_Method_Name__c = bounded(failure.classMethod, 255, null);
-    row.Source_Object__c = failure.recordId.getSObjectType().getDescribe().getName();
-    row.Source_Record_Id__c = String.valueOf(failure.recordId);
+    row.Source_Object__c = failure.recordId == null ? failure.sourceObject : failure.recordId.getSObjectType().getDescribe().getName();
+    row.Source_Record_Id__c = failure.recordId == null ? failure.externalId : String.valueOf(failure.recordId);
     row.Action_Source_Object__c = row.Source_Object__c;
     row.Action_Source_Record_Id__c = row.Source_Record_Id__c;
     row.Dml_Operation__c = bounded(failure.dmlOperation, 255, null);
@@ -163,7 +171,7 @@ public without sharing class IntegrationErrorLogService {
       row.Retry_Count__c,
       row.Error_Message__c
     );
-    applyTypedLookup(row, failure.recordId);
+    if (failure.recordId != null) applyTypedLookup(row, failure.recordId);
   }
 
   private static void applyTypedLookup(Error_Log__c row, Id recordId) {
@@ -208,6 +216,7 @@ public without sharing class IntegrationErrorLogService {
   }
 
   private static String referenceFor(Failure failure) {
+    if (failure.recordId == null) return 'inbound:' + failure.connectorKey + ':' + failure.operationKey + ':' + failure.externalId;
     return referenceFor(failure.workItemId, failure.recordId);
   }
 

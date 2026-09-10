@@ -16,6 +16,7 @@ public without sharing class IntegrationWorkDispatcher {
     List<Integration_Work_Item__c> candidates = [
       SELECT
         Id,
+        Integration__c,
         Status__c,
         Lock_Key__c,
         Attempt_Count__c,
@@ -34,6 +35,25 @@ public without sharing class IntegrationWorkDispatcher {
       return 0;
     }
 
+    Set<String> resourceConnectors = new Set<String>();
+    for (Integration_Operation__mdt operation : [SELECT Connector_Key__c, Resource_Contract_JSON__c FROM Integration_Operation__mdt WHERE Active__c = true]) {
+      if (String.isNotBlank(operation.Resource_Contract_JSON__c)) resourceConnectors.add(operation.Connector_Key__c.toLowerCase());
+    }
+    List<Integration_Work_Item__c> admitted = new List<Integration_Work_Item__c>();
+    Set<String> activeResources=ConnectorConfigService.activeConnectorKeys(resourceConnectors);
+    Map<String,Integer> requested = new Map<String,Integer>();
+    for (Integration_Work_Item__c candidate : candidates) {
+      String key = candidate.Integration__c.toLowerCase();
+      if (activeResources.contains(key)) requested.put(key, (requested.containsKey(key) ? requested.get(key) : 0) + 1);
+    }
+    Map<String,Integer> capacity = GenericResourceRateLimit.reserveMany(requested);
+    for (Integration_Work_Item__c candidate : candidates) {
+      String key = candidate.Integration__c.toLowerCase();
+      if (!resourceConnectors.contains(key)) admitted.add(candidate);
+      else if (activeResources.contains(key) && capacity.get(key) > 0) { admitted.add(candidate); capacity.put(key, capacity.get(key)-1); }
+    }
+    candidates = admitted;
+    if (candidates.isEmpty()) return 0;
     for (Integration_Work_Item__c row : candidates) {
       row.Status__c = IntegrationWorkService.STATUS_PROCESSING;
       row.Processor_Token__c = leaseToken(row.Id);

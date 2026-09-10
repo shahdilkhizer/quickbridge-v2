@@ -3,14 +3,10 @@
     <template lwc:if={loading}><lightning-spinner alternative-text="Loading payment providers"></lightning-spinner></template>
     <template lwc:if={message}><div class={messageClass} role="status">{message}</div></template>
     <lightning-combobox label="Payment provider" value={provider} options={providers} onchange={handleProvider}></lightning-combobox>
-    <div class="slds-grid slds-gutters slds-m-top_small">
-      <div class="slds-col"><lightning-input type="number" step="0.01" min="0.01" label="Amount" value={amount} onchange={handleAmount}></lightning-input></div>
-      <div class="slds-col"><lightning-input label="Currency" maxlength="3" value={currency} onchange={handleCurrency}></lightning-input></div>
-    </div>
-    <p class="slds-text-body_small slds-text-color_weak slds-m-top_medium">Card details are collected only by the provider's secure browser checkout. Quickbridge never sends card numbers or security codes to Apex.</p>
+    <p class="slds-text-body_small slds-text-color_weak slds-m-top_medium">Amount, currency, reference, and customer details come from the saved mapping for this record. Payment details are collected only on the provider's hosted page.</p>
     <div slot="footer">
       <lightning-button label="Cancel" onclick={close}></lightning-button>
-      <lightning-button class="slds-m-left_small" variant="brand" label="Open secure checkout" onclick={initialize} disabled={disabled}></lightning-button>
+      <lightning-button class="slds-m-left_small" variant="brand" label="Create hosted payment" onclick={initialize} disabled={disabled}></lightning-button>
     </div>
   </lightning-quick-action-panel>
 </template>

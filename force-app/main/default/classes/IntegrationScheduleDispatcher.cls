@@ -37,6 +37,19 @@ public without sharing class IntegrationScheduleDispatcher {
       return 0;
     }
 
+    Set<String> resourceKeys=new Set<String>();
+    for(Integration_Operation__mdt operation:[SELECT Connector_Key__c,Resource_Contract_JSON__c FROM Integration_Operation__mdt WHERE Active__c=true]) {
+      if(String.isNotBlank(operation.Resource_Contract_JSON__c)) resourceKeys.add(operation.Connector_Key__c.toLowerCase());
+    }
+    Set<String> activeResources=ConnectorConfigService.activeConnectorKeys(resourceKeys);
+    List<Scheduled_Integration_Job__c> enabledJobs=new List<Scheduled_Integration_Job__c>();
+    for(Scheduled_Integration_Job__c job:dueJobs) {
+      String key=normalizeConnector(job.Integration_Type__c);
+      if(!resourceKeys.contains(key) || activeResources.contains(key)) enabledJobs.add(job);
+    }
+    dueJobs=enabledJobs;
+    if(dueJobs.isEmpty()) return 0;
+
     for (Scheduled_Integration_Job__c job : dueJobs) {
       job.Status__c = 'Claimed';
       job.Lease_Token__c = newLeaseToken(job.Id);

@@ -142,6 +142,8 @@ export default class QuickbridgeConfigPanel extends LightningElement {
   get hasExpiryAlert() { return this.expiryAlert?.shouldAlert === true; }
   get expiryAlertClass() { return `expiry-alert ${this.expiryAlert?.variant || 'warning'}`; }
   get hasMappingWorkspace() { return Boolean(this.mappingWorkspace); }
+  get isPaymentMapping() { return this.selectedConnector?.hasPayment === true; }
+  get isCarrierMapping() { return this.selectedConnector?.hasCarrier === true; }
   get hasMappingOperations() { return (this.mappingWorkspace?.operations || []).length > 0; }
   get selectedMappingOperation() { return (this.mappingWorkspace?.operations || []).find((item) => item.workspaceKey === this.selectedMappingOperationKey) || this.mappingWorkspace?.operations?.[0]; }
   get mappingOperationOptions() { return (this.mappingWorkspace?.operations || []).map((item) => ({ label: `${item.label} — ${item.direction}`, value: item.workspaceKey })); }
@@ -326,6 +328,11 @@ export default class QuickbridgeConfigPanel extends LightningElement {
 
   async loadMappings(refreshedKey) {
     this.mappingLoading = true; this.mappingError = undefined;
+    if (this.isPaymentMapping || this.isCarrierMapping) {
+      this.mappingWorkspace = undefined;
+      this.mappingLoading = false;
+      return true;
+    }
     const oldWorkspace = this.mappingWorkspace;
     const selectedKey = this.selectedMappingOperationKey;
     try {

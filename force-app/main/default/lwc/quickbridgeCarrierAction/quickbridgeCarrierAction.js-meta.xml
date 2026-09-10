@@ -2,5 +2,5 @@
 <LightningComponentBundle xmlns="http://soap.sforce.com/2006/04/metadata">
   <apiVersion>66.0</apiVersion><isExposed>true</isExposed>
   <targets><target>lightning__RecordAction</target></targets>
-  <targetConfigs><targetConfig targets="lightning__RecordAction"><actionType>ScreenAction</actionType><objects><object>Account</object><object>Order</object><object>Invoice__c</object></objects></targetConfig></targetConfigs>
+  <targetConfigs><targetConfig targets="lightning__RecordAction"><actionType>ScreenAction</actionType></targetConfig></targetConfigs>
 </LightningComponentBundle>

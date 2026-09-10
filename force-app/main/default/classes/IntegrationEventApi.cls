@@ -1,12 +1,11 @@
 public without sharing class IntegrationEventApi {
   private static Boolean dispatching = false;
+  public static Boolean suppressDispatch = false;
   private static List<Integration_Operation__mdt> operationCache;
   @TestVisible private static List<Integration_Operation__mdt> testOperations;
 
   public static Boolean controlsRecordSave(String connectorKey) {
-    return new Set<String>{ 'qbo', 'shopify', 'klaviyo' }.contains(
-      String.isBlank(connectorKey) ? '' : connectorKey.trim().toLowerCase()
-    );
+    return String.isNotBlank(connectorKey);
   }
 
   public static Boolean supportsRecordSave(String connectorKey, String direction) {
@@ -29,7 +28,7 @@ public without sharing class IntegrationEventApi {
     String objectApiName, String eventName, List<SObject> newRecords,
     Map<Id, SObject> oldRecords
   ) {
-    if (dispatching || String.isBlank(objectApiName) ||
+    if (dispatching || suppressDispatch || String.isBlank(objectApiName) ||
         !new Set<String>{ 'afterInsert', 'afterUpdate', 'afterDelete' }.contains(eventName) ||
         newRecords == null || newRecords.isEmpty()) return;
     validateObject(objectApiName, newRecords);
@@ -78,8 +77,13 @@ public without sharing class IntegrationEventApi {
         if (direct) {
           for (SObject recordValue : newRecords) {
             if (recordValue.Id != null && qualifies(recordValue, oldRecords, eventName, watched)) {
-              requests.add(requestFor(operation.Connector_Key__c, operation.Operation_Key__c,
-                objectApiName, recordValue.Id));
+              IntegrationWorkRequest work = requestFor(operation.Connector_Key__c, operation.Operation_Key__c,
+                objectApiName, recordValue.Id);
+              work.lifecycleAction = eventName == 'afterDelete' ? 'Delete' : 'Save';
+              if (String.isNotBlank(operation.Salesforce_External_Id_Field__c)) {
+                work.sourceExternalId = (String) recordValue.get(operation.Salesforce_External_Id_Field__c);
+              }
+              requests.add(work);
             }
           }
         }
@@ -89,8 +93,12 @@ public without sharing class IntegrationEventApi {
             SObject sourceValue = eventName == 'afterDelete' && oldRecords != null
               ? oldRecords.get(recordValue.Id) : recordValue;
             Id parentId = sourceValue == null ? null : (Id) sourceValue.get(parentField);
-            if (parentId != null) requests.add(requestFor(operation.Connector_Key__c,
-              operation.Operation_Key__c, operation.Salesforce_Object__c, parentId));
+            if (parentId != null) {
+              IntegrationWorkRequest work = requestFor(operation.Connector_Key__c,
+                operation.Operation_Key__c, operation.Salesforce_Object__c, parentId);
+              work.lifecycleAction = 'ChildChanged';
+              requests.add(work);
+            }
           }
         }
       }

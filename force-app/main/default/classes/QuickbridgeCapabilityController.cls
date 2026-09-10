@@ -94,6 +94,31 @@ public with sharing class QuickbridgeCapabilityController {
   }
 
   @AuraEnabled
+  public static HostedPaymentResult createHostedPayment(
+    String connectorKey,
+    Id sourceRecordId
+  ) {
+    String keyValue = requireReadyConnector(connectorKey, 'payment.hosted');
+    assertRecordAccess(sourceRecordId);
+    HostedPaymentResult result = HostedPaymentService.create(
+      keyValue,
+      sourceRecordId
+    );
+    if (result == null || result.successful != true) {
+      logFailure(
+        sourceRecordId,
+        keyValue,
+        'hosted',
+        result == null ? 'The payment provider returned no result.' : result.errorSummary,
+        result == null ? null : result.httpStatusCode,
+        result != null && result.retryable,
+        'QuickbridgeCapabilityController.createHostedPayment'
+      );
+    }
+    return result;
+  }
+
+  @AuraEnabled
   public static ConnectorExecutionResult executeCarrierOperation(
     String connectorKey,
     String operation,
@@ -131,7 +156,7 @@ public with sharing class QuickbridgeCapabilityController {
 
   private static String requireCapability(String value) {
     String result = String.isBlank(value) ? null : value.trim().toLowerCase();
-    if (!new Set<String>{ 'carrier.operation', 'payment.checkout' }.contains(result)) {
+    if (!new Set<String>{ 'carrier.operation', 'payment.checkout', 'payment.hosted' }.contains(result)) {
       throw new AuraHandledException('Unsupported connector capability.');
     }
     return result;

@@ -60,7 +60,7 @@
     </values>
     <values>
         <field>Sort_Order__c</field>
-        <value xsi:type="xsd:double">140</value>
+        <value xsi:type="xsd:double">140.0</value>
     </values>
     <values>
         <field>Transform__c</field>

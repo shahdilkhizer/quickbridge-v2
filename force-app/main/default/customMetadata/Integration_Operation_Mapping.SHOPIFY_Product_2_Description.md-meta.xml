@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomMetadata xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+    <label>Product Description</label>
+    <protected>false</protected>
+    <values>
+        <field>Active__c</field>
+        <value xsi:type="xsd:boolean">true</value>
+    </values>
+    <values>
+        <field>Collection_Path__c</field>
+        <value xsi:nil="true"/>
+    </values>
+    <values>
+        <field>Connector_Key__c</field>
+        <value xsi:type="xsd:string">shopify</value>
+    </values>
+    <values>
+        <field>Default_Value__c</field>
+        <value xsi:nil="true"/>
+    </values>
+    <values>
+        <field>Direction__c</field>
+        <value xsi:type="xsd:string">Outbound</value>
+    </values>
+    <values>
+        <field>External_Path__c</field>
+        <value xsi:type="xsd:string">product.body_html</value>
+    </values>
+    <values>
+        <field>Is_External_Id__c</field>
+        <value xsi:type="xsd:boolean">false</value>
+    </values>
+    <values>
+        <field>Null_Behavior__c</field>
+        <value xsi:type="xsd:string">Omit</value>
+    </values>
+    <values>
+        <field>Operation_Key__c</field>
+        <value xsi:type="xsd:string">ProductUpsert</value>
+    </values>
+    <values>
+        <field>Parent_External_Path__c</field>
+        <value xsi:nil="true"/>
+    </values>
+    <values>
+        <field>Parent_Salesforce_Field__c</field>
+        <value xsi:nil="true"/>
+    </values>
+    <values>
+        <field>Required__c</field>
+        <value xsi:type="xsd:boolean">false</value>
+    </values>
+    <values>
+        <field>Salesforce_Field__c</field>
+        <value xsi:type="xsd:string">Description</value>
+    </values>
+    <values>
+        <field>Salesforce_Object__c</field>
+        <value xsi:type="xsd:string">Product2</value>
+    </values>
+    <values>
+        <field>Sort_Order__c</field>
+        <value xsi:type="xsd:double">2.0</value>
+    </values>
+    <values>
+        <field>Transform__c</field>
+        <value xsi:type="xsd:string">string</value>
+    </values>
+</CustomMetadata>

@@ -23,6 +23,10 @@ public without sharing class InboundIntegrationHandler
     try {
       GenericIntegrationRuntime.OperationDefinition definition = validateRequest();
       maximumPages = definition.maximumPages;
+      if (String.isNotBlank(definition.resourceContractJson) && !GenericResourceRateLimit.reserve(request.connectorKey, 1)) {
+        aggregateResult = ConnectorExecutionResult.failed('Connector transport capacity is reserved; retry next minute.', true, 60);
+        return new List<Integer>();
+      }
       if (request.scheduleId != null) {
         Boolean leaseAccepted = ConnectorScheduleService.markRunning(
           request.scheduleId,
@@ -58,6 +62,9 @@ public without sharing class InboundIntegrationHandler
         definition.relativeEndpoint,
         GenericIntegrationRuntime.queryParametersFor(definition, request)
       );
+      if (String.isNotBlank(request.cursor) && definition.paginationType == 'linkheader') {
+        requestSpec.relativeEndpoint = request.cursor;
+      }
       requestSpec.approvedBaseUrl = definition.approvedBaseUrl;
       requestSpec.method = String.isBlank(definition.httpMethod)
         ? 'GET'
@@ -161,6 +168,15 @@ public without sharing class InboundIntegrationHandler
         completeFailure('Generic inbound execution lost the schedule lease.');
       }
       return;
+    }
+    if (request != null && request.scheduleId != null && request.syncStartedAt != null) {
+      List<Scheduled_Integration_Job__c> checkpointRows = [SELECT Id, Lease_Token__c FROM Scheduled_Integration_Job__c WHERE Id = :request.scheduleId FOR UPDATE];
+      if (checkpointRows.isEmpty() || checkpointRows[0].Lease_Token__c != request.leaseToken) {
+        completeFailure('Inbound checkpoint no longer owns the schedule lease.');
+        return;
+      }
+      checkpointRows[0].Sync_Watermark__c = request.syncStartedAt;
+      update checkpointRows;
     }
     ConnectorScheduleService.completeSuccess(
       request == null ? null : request.scheduleId,
@@ -376,6 +392,7 @@ public without sharing class InboundIntegrationHandler
       ? new List<Id>()
       : new List<Id>(source.recordIds);
     result.cursor = source.cursor;
+    result.syncStartedAt = source.syncStartedAt;
     result.sinceValue = source.sinceValue;
     result.initialSync = source.initialSync;
     result.scopeSize = source.scopeSize;

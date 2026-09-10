@@ -67,6 +67,18 @@ public inherited sharing class ConnectorCapabilityRouter {
     return (PaymentProviderAdapter) adapter;
   }
 
+  public static HostedPaymentProviderAdapter hostedPaymentAdapter(
+    String connectorKey
+  ) {
+    Object adapter = instantiate(connectorKey, 'payment.hosted');
+    if (!(adapter instanceof HostedPaymentProviderAdapter)) {
+      throw new ConnectorCapabilityException(
+        'Configured payment adapter does not implement HostedPaymentProviderAdapter.'
+      );
+    }
+    return (HostedPaymentProviderAdapter) adapter;
+  }
+
   public static Boolean hasCapability(String connectorKey, String capabilityKey) {
     return String.isNotBlank(
       adapterClassName(requireToken(connectorKey), requireCapability(capabilityKey))

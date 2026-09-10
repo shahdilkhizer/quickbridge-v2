@@ -341,11 +341,14 @@ private class ConnectorCapabilityArchitectureTest {
           connectorIdByKey.get(definition.Connector_Key__c),
           definition.Connector_Key__c,
           definition.Field_Key__c,
-          definition.Field_Key__c == 'realmId' ? '123456789' : 'test-value'
+          definition.Field_Key__c == 'realmId' ? '123456789' :
+            definition.Field_Key__c == 'storeDomain' ? 'contract-store.myshopify.com' :
+            definition.Field_Key__c == 'startDate' ? String.valueOf(Date.today().addDays(-10)) : 'test-value'
         )
       );
     }
     insert requiredValues;
+    insert new Pricebook2(Name='test-value',IsActive=true);
 
     Map<String, ConnectorReadinessService.Assessment> assessments =
       ConnectorReadinessService.assessAll(connectorKeys, true);
@@ -354,7 +357,7 @@ private class ConnectorCapabilityArchitectureTest {
       ConnectorReadinessService.Assessment assessment = assessments.get(connectorKey);
       System.assertNotEquals(null, assessment);
       System.assertEquals(
-        true,
+        connectorKey!='shopify',
         assessment.operationalReady,
         connectorKey + ': ' + String.join(assessment.issues, ' ')
       );

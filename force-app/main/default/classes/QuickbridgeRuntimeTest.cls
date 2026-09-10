@@ -168,6 +168,7 @@ private class QuickbridgeRuntimeTest {
 
   @IsTest
   static void simultaneousSchedulesShareCapacityAndExpiredLeaseRecovers() {
+    insert new Connector_Instance__c(Name='Shopify scheduling',Connector_Key__c='shopify',Active__c=true);
     Scheduled_Integration_Job__c qbo = dueSchedule('QBO Simultaneous', 'QuickBooks', 'CustomerUpsert');
     Scheduled_Integration_Job__c shopify = dueSchedule('Shopify Simultaneous', 'Shopify', 'ProductUpsert');
     insert new List<Scheduled_Integration_Job__c>{ qbo, shopify };
@@ -203,6 +204,7 @@ private class QuickbridgeRuntimeTest {
 
   @IsTest
   static void constrainedCapacityLeavesSecondScheduleDue() {
+    insert new Connector_Instance__c(Name='Shopify scheduling',Connector_Key__c='shopify',Active__c=true);
     insert new List<Scheduled_Integration_Job__c>{
       dueSchedule('Capacity Older', 'QuickBooks', 'CustomerUpsert'),
       dueSchedule('Capacity Newer', 'Shopify', 'ProductUpsert')

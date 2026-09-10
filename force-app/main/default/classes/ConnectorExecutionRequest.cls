@@ -10,6 +10,7 @@ public inherited sharing class ConnectorExecutionRequest {
   public List<Id> recordIds { get; set; }
   public String cursor { get; set; }
   public Datetime sinceValue { get; set; }
+  public Datetime syncStartedAt { get; set; }
   public Boolean initialSync { get; set; }
   public Integer scopeSize { get; set; }
   public String payload { get; set; }
@@ -72,6 +73,7 @@ public inherited sharing class ConnectorExecutionRequest {
     copyValue.externalEntity = source.externalEntity;
     copyValue.cursor = source.cursor;
     copyValue.sinceValue = source.sinceValue;
+    copyValue.syncStartedAt = source.syncStartedAt;
     copyValue.initialSync = source.initialSync;
     copyValue.scopeSize = source.scopeSize;
     copyValue.payload = source.payload;

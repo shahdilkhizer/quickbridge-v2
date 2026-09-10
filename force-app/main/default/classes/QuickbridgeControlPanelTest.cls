@@ -31,6 +31,16 @@ private class QuickbridgeControlPanelTest {
     return QuickbridgeAdminSecurity.createSession('admin@example.com').sessionToken;
   }
 
+  private static QuickbridgeControlPanelController.ConnectorView connectorView(
+    QuickbridgeControlPanelController.PanelBootstrap bootstrap,
+    String connectorKey
+  ) {
+    for (QuickbridgeControlPanelController.ConnectorView item : bootstrap.connectors) {
+      if (item.key == connectorKey) return item;
+    }
+    return null;
+  }
+
   @IsTest
   static void authenticationCreatesOnlyHashedSession() {
     QuickbridgeAdminSecurity.bypassPermissionsForTests = true;
@@ -60,19 +70,38 @@ private class QuickbridgeControlPanelTest {
   }
 
   @IsTest
-  static void bootstrapSeparatesEntitlementFromOperationalState() {
+  static void bootstrapGroupsProductsByConnectorActivation() {
     QuickbridgeAdminSecurity.bypassPermissionsForTests = true;
     QuickbridgeAdminSecurity.bypassRateLimitForTests = true;
     QuickbridgeAdminSecurity.SessionResult session = QuickbridgeAdminSecurity.createSession('admin@example.com');
     Connector_Instance__c qbo = [SELECT Id, Entitlement_Status__c, Active__c, Expiry_Date__c FROM Connector_Instance__c WHERE Connector_Key__c = 'qbo' LIMIT 1];
     qbo.Entitlement_Status__c = 'Active'; qbo.Active__c = false; qbo.Expiry_Date__c = Date.today().addDays(20); update qbo;
-    Test.startTest(); QuickbridgeControlPanelController.PanelBootstrap bootstrap = QuickbridgeControlPanelController.getPanelBootstrap(session.sessionToken); Test.stopTest();
-    QuickbridgeControlPanelController.ConnectorView qboView;
-    for (QuickbridgeControlPanelController.ConnectorView item : bootstrap.connectors) if (item.key == 'qbo') qboView = item;
-    System.assertNotEquals(null, qboView);
-    System.assertEquals(true, qboView.subscribed);
-    System.assertEquals(false, qboView.active);
-    System.assertEquals(20, qboView.expiryDate == null ? null : Date.today().daysBetween(qboView.expiryDate));
+    QuickbridgeControlPanelController.ConnectorView inactiveView = connectorView(
+      QuickbridgeControlPanelController.getPanelBootstrap(session.sessionToken),
+      'qbo'
+    );
+    System.assertNotEquals(null, inactiveView);
+    System.assertEquals(false, inactiveView.subscribed);
+    System.assertEquals(false, inactiveView.active);
+    System.assertEquals(20, inactiveView.expiryDate == null ? null : Date.today().daysBetween(inactiveView.expiryDate));
+
+    qbo.Entitlement_Status__c = 'Available'; qbo.Active__c = true; update qbo;
+    QuickbridgeControlPanelController.ConnectorView activeView = connectorView(
+      QuickbridgeControlPanelController.getPanelBootstrap(session.sessionToken),
+      'qbo'
+    );
+    System.assertNotEquals(null, activeView);
+    System.assertEquals(true, activeView.subscribed);
+    System.assertEquals(true, activeView.active);
+
+    delete qbo;
+    QuickbridgeControlPanelController.ConnectorView missingView = connectorView(
+      QuickbridgeControlPanelController.getPanelBootstrap(session.sessionToken),
+      'qbo'
+    );
+    System.assertNotEquals(null, missingView);
+    System.assertEquals(false, missingView.subscribed);
+    System.assertEquals(false, missingView.active);
   }
 
   @IsTest

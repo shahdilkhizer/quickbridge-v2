@@ -19,6 +19,14 @@
         <value xsi:type="xsd:boolean">true</value>
     </values>
     <values>
+        <field>Mapping_Context__c</field>
+        <value xsi:nil="true"/>
+    </values>
+    <values>
+        <field>Mapping_Step__c</field>
+        <value xsi:nil="true"/>
+    </values>
+    <values>
         <field>SF_Field__c</field>
         <value xsi:type="xsd:string">Product__c</value>
     </values>
@@ -27,8 +35,28 @@
         <value xsi:type="xsd:string">Invoice_Line__c</value>
     </values>
     <values>
+        <field>Source_Customer_Lookup_Field__c</field>
+        <value xsi:nil="true"/>
+    </values>
+    <values>
+        <field>Source_Customer_Target_Object__c</field>
+        <value xsi:nil="true"/>
+    </values>
+    <values>
+        <field>Source_Email_Field_API_Name__c</field>
+        <value xsi:nil="true"/>
+    </values>
+    <values>
+        <field>Source_Lookup_On_Target_Field__c</field>
+        <value xsi:nil="true"/>
+    </values>
+    <values>
         <field>Sync_Direction__c</field>
         <value xsi:type="xsd:string">Inbound</value>
+    </values>
+    <values>
+        <field>Target_Field_API_Name__c</field>
+        <value xsi:nil="true"/>
     </values>
     <values>
         <field>Target_Object_API_Name__c</field>

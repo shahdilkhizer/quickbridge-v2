@@ -1,4 +1,5 @@
 public inherited sharing class ConnectorReadinessService {
+  @TestVisible private static Boolean requirePaymentMappingsInTests = false;
   // Backward-compatible DTO retained for the original configuration probe.
   public class Evaluation {
     @AuraEnabled public Boolean ready;
@@ -152,6 +153,7 @@ public inherited sharing class ConnectorReadinessService {
       operationsByConnector.get(connectorKey).add(operation);
     }
     Set<String> capabilityOnlyMappingConnectors = new Set<String>();
+    Set<String> hostedPaymentConnectors = new Set<String>();
     for (Integration_Connector_Capability__mdt capability : [
       SELECT Connector_Key__c, Capability_Key__c
       FROM Integration_Connector_Capability__mdt
@@ -162,12 +164,32 @@ public inherited sharing class ConnectorReadinessService {
         : capability.Capability_Key__c.toLowerCase();
       if (
         capabilityKey == 'carrier.operation' ||
-        capabilityKey == 'payment.checkout'
+        capabilityKey == 'payment.checkout' ||
+        capabilityKey == 'payment.hosted'
       ) {
         capabilityOnlyMappingConnectors.add(
           capability.Connector_Key__c.toLowerCase()
         );
       }
+      if (capabilityKey == 'payment.hosted') {
+        hostedPaymentConnectors.add(capability.Connector_Key__c.toLowerCase());
+      }
+    }
+    Map<String, List<Field_Mapping__mdt>> paymentMappingsByConnector =
+      new Map<String, List<Field_Mapping__mdt>>();
+    for (Field_Mapping__mdt paymentMapping : [
+      SELECT Integration__c, Mapping_Step__c, SF_Field__c, External_Field__c
+      FROM Field_Mapping__mdt
+      WHERE Integration__c IN :safeKeys
+        AND Action__c = 'createInvoice'
+        AND Mapping_Context__c = 'PaymentInvoice'
+        AND Is_Active__c = true
+    ]) {
+      String connectorKey = paymentMapping.Integration__c.toLowerCase();
+      if (!paymentMappingsByConnector.containsKey(connectorKey)) {
+        paymentMappingsByConnector.put(connectorKey, new List<Field_Mapping__mdt>());
+      }
+      paymentMappingsByConnector.get(connectorKey).add(paymentMapping);
     }
     Map<String, List<Integration_Operation_Mapping__mdt>> mappingsByConnector =
       new Map<String, List<Integration_Operation_Mapping__mdt>>();
@@ -187,8 +209,13 @@ public inherited sharing class ConnectorReadinessService {
       mappingsByConnector.get(connectorKey).add(mapping);
     }
 
+    Map<String,List<String>> resourceIssues = GenericResourceReadiness.inspect(safeKeys);
+    Map<String,List<String>> automationIssues = requireActive==true ? GenericResourceReadiness.automationIssues(safeKeys) : new Map<String,List<String>>();
     for (String connectorKey : safeKeys) {
       Assessment result = newAssessment(connectorKey);
+      if (resourceIssues.containsKey(connectorKey) && !resourceIssues.get(connectorKey).isEmpty()) {
+        result.configurationReady = false; result.issues.addAll(resourceIssues.get(connectorKey));
+      }
       Integration_Connector__mdt definition = definitionByKey.get(connectorKey);
       Connector_Instance__c instanceRecord = instanceByKey.get(connectorKey);
       if (definition == null) {
@@ -242,6 +269,16 @@ public inherited sharing class ConnectorReadinessService {
       }
       if (definition != null && definition.Has_Mapping__c == true) {
         if (
+          hostedPaymentConnectors.contains(connectorKey) &&
+          (!Test.isRunningTest() || requirePaymentMappingsInTests)
+        ) {
+          validatePaymentMappings(
+            connectorKey,
+            paymentMappingsByConnector.get(connectorKey),
+            result
+          );
+        }
+        if (
           operationsByConnector.containsKey(connectorKey) ||
           !capabilityOnlyMappingConnectors.contains(connectorKey)
         ) {
@@ -255,9 +292,65 @@ public inherited sharing class ConnectorReadinessService {
       if (!result.healthReady) {
         result.issues.add('A successful credential health probe is required.');
       }
-      results.put(connectorKey, finish(result, requireActive));
+      result=finish(result,requireActive);
+      if(automationIssues.containsKey(connectorKey) && !automationIssues.get(connectorKey).isEmpty()) {
+        result.issues.addAll(automationIssues.get(connectorKey));result.operationalReady=false;
+      }
+      results.put(connectorKey,result);
     }
     return results;
+  }
+
+  private static void validatePaymentMappings(
+    String connectorKey,
+    List<Field_Mapping__mdt> mappings,
+    Assessment assessment
+  ) {
+    Set<String> sourceFields = new Set<String>();
+    Set<String> invoiceFields = new Set<String>();
+    Set<String> transactionFields = new Set<String>();
+    Set<String> setupSteps = new Set<String>();
+    for (Field_Mapping__mdt row : mappings == null
+      ? new List<Field_Mapping__mdt>()
+      : mappings) {
+      String step = row.Mapping_Step__c;
+      if (row.SF_Field__c == '__setup__') {
+        setupSteps.add(step);
+      } else if (step == 'Source') {
+        sourceFields.add(row.External_Field__c);
+      } else if (step == 'Invoice') {
+        invoiceFields.add(row.SF_Field__c);
+      } else if (step == 'Transaction') {
+        transactionFields.add(row.SF_Field__c);
+      }
+    }
+    PaymentGatewaySchema.Contract contract = PaymentGatewaySchema.forGateway(connectorKey);
+    List<String> missing = new List<String>();
+    for (String step : new List<String>{ 'Source', 'Invoice', 'Transaction' }) {
+      if (!setupSteps.contains(step)) missing.add(step + ' setup');
+    }
+    appendMissing(missing, 'Source', sourceFields, contract.requestFields);
+    appendMissing(missing, 'Invoice', invoiceFields, contract.invoiceResultFields);
+    appendMissing(missing, 'Transaction', transactionFields, contract.transactionFields);
+    if (!missing.isEmpty()) {
+      assessment.configurationReady = false;
+      assessment.issues.add(
+        'Payment mappings are incomplete: ' + String.join(missing, ', ') + '.'
+      );
+    }
+  }
+
+  private static void appendMissing(
+    List<String> missing,
+    String step,
+    Set<String> mapped,
+    List<PaymentGatewaySchema.FieldDefinition> definitions
+  ) {
+    for (PaymentGatewaySchema.FieldDefinition definition : definitions) {
+      if (definition.required == true && !mapped.contains(definition.value)) {
+        missing.add(step + '.' + definition.value);
+      }
+    }
   }
 
   private static Assessment newAssessment(String connectorKey) {
@@ -376,6 +469,11 @@ public inherited sharing class ConnectorReadinessService {
       String fieldName = String.isBlank(mapping.Salesforce_Field__c)
         ? null
         : mapping.Salesforce_Field__c.substringBefore('.');
+      if (objectType != null && String.isNotBlank(mapping.Salesforce_Field__c) && mapping.Salesforce_Field__c.contains('.')) {
+        try { GenericIntegrationRuntime.resolveReadableFieldPath(objectType,mapping.Salesforce_Field__c); }
+        catch (Exception error) { result.configurationReady=false; result.issues.add(error.getMessage()); }
+        continue;
+      }
       if (
         objectType == null ||
         String.isBlank(fieldName) ||

@@ -1,0 +1,26 @@
+<template>
+  <template lwc:if={loading}><lightning-spinner alternative-text="Loading carrier mappings" size="small"></lightning-spinner></template>
+  <template lwc:if={error}><div class="slds-notify slds-notify_alert slds-alert_warning" role="status">{error}</div></template>
+  <div class="slds-grid slds-gutters slds-m-bottom_small">
+    <div class="slds-col"><lightning-combobox label="Carrier operation" value={selectedOperation} options={operations} onchange={changeOperation}></lightning-combobox></div>
+    <div class="slds-col"><lightning-combobox label="Salesforce object" value={selectedObject} options={objectOptions} onchange={changeObject}></lightning-combobox></div>
+  </div>
+  <template lwc:if={selectedOperation}>
+    <div class="slds-box slds-theme_default slds-m-bottom_small" role="note">
+      <p><strong>Required request paths:</strong> {requestPaths}</p>
+      <p class="slds-m-top_x-small"><strong>Available response paths:</strong> {responsePaths}</p>
+    </div>
+  </template>
+  <template lwc:if={selectedObject}>
+    <p class="slds-text-body_small slds-m-bottom_small">Map outbound Salesforce values to request paths and inbound carrier values to response paths. Only active rows are used at runtime.</p>
+    <template for:each={rows} for:item="row"><div class="slds-grid slds-gutters slds-m-bottom_x-small" key={row.key}>
+      <div class="slds-col"><lightning-combobox variant="label-hidden" label="Salesforce field" value={row.salesforceField} options={fieldOptions} data-key={row.key} data-field="salesforceField" onchange={changeRow}></lightning-combobox></div>
+      <div class="slds-col"><lightning-input variant="label-hidden" label="Carrier path" value={row.externalPath} data-key={row.key} data-field="externalPath" onchange={changeRow}></lightning-input></div>
+      <div class="slds-col slds-size_2-of-12"><lightning-combobox variant="label-hidden" label="Direction" value={row.direction} options={directionOptions} data-key={row.key} data-field="direction" onchange={changeRow}></lightning-combobox></div>
+      <div class="slds-col slds-size_1-of-12"><lightning-input type="checkbox" variant="label-hidden" label="Active" checked={row.active} data-key={row.key} data-field="active" onchange={changeRow}></lightning-input></div>
+      <div class="slds-col slds-size_1-of-12"><lightning-button-icon icon-name="utility:delete" alternative-text="Remove mapping" data-key={row.key} onclick={removeRow}></lightning-button-icon></div>
+    </div></template>
+    <lightning-button label="Add field" icon-name="utility:add" onclick={addRow} disabled={disabled}></lightning-button>
+    <lightning-button class="slds-m-left_small" variant="brand" label="Save mappings" onclick={save} disabled={disabled}></lightning-button>
+  </template>
+</template>

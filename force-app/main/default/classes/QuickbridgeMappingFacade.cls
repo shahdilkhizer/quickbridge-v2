@@ -21,6 +21,103 @@ public with sharing class QuickbridgeMappingFacade {
     return QuickbridgeMappingController.getMappingWorkspace(connectorKey);
   }
 
+  @AuraEnabled(cacheable=false)
+  public static PaymentInvoiceMappingController.GatewayMappingConfig getPaymentMappingConfig(
+    String sessionToken,
+    String connectorKey
+  ) {
+    QuickbridgeAdminSecurity.requireSession(sessionToken);
+    return PaymentInvoiceMappingController.getGatewayMappingConfig(connectorKey);
+  }
+
+  @AuraEnabled(cacheable=false)
+  public static List<PaymentInvoiceMappingController.FieldOption> getPaymentSourceObjects(
+    String sessionToken
+  ) {
+    QuickbridgeAdminSecurity.requireSession(sessionToken);
+    return PaymentInvoiceMappingController.getEligibleSourceObjects();
+  }
+
+  @AuraEnabled(cacheable=false)
+  public static List<PaymentInvoiceMappingController.FieldOption> getPaymentTargetObjects(
+    String sessionToken
+  ) {
+    QuickbridgeAdminSecurity.requireSession(sessionToken);
+    return PaymentInvoiceMappingController.getCreateableObjects();
+  }
+
+  @AuraEnabled(cacheable=false)
+  public static List<PaymentInvoiceMappingController.FieldOption> getPaymentObjectsWithLookupTo(
+    String sessionToken,
+    String targetObjectApiName
+  ) {
+    QuickbridgeAdminSecurity.requireSession(sessionToken);
+    return PaymentInvoiceMappingController.getObjectsWithLookupTo(targetObjectApiName);
+  }
+
+  @AuraEnabled(cacheable=false)
+  public static List<PaymentInvoiceMappingController.FieldOption> getPaymentObjectFields(
+    String sessionToken,
+    String objectApiName
+  ) {
+    QuickbridgeAdminSecurity.requireSession(sessionToken);
+    return PaymentInvoiceMappingController.getObjectFields(objectApiName);
+  }
+
+  @AuraEnabled(cacheable=false)
+  public static List<PaymentInvoiceMappingController.FieldOption> getPaymentLookupFields(
+    String sessionToken,
+    String objectApiName,
+    String targetObjectApiName
+  ) {
+    QuickbridgeAdminSecurity.requireSession(sessionToken);
+    return PaymentInvoiceMappingController.getLookupFields(
+      objectApiName,
+      targetObjectApiName
+    );
+  }
+
+  @AuraEnabled(cacheable=false)
+  public static List<PaymentInvoiceMappingController.FieldOption> getPaymentEmailFields(
+    String sessionToken,
+    String objectApiName,
+    String customerLookupField
+  ) {
+    QuickbridgeAdminSecurity.requireSession(sessionToken);
+    return PaymentInvoiceMappingController.getEmailFieldOptions(
+      objectApiName,
+      customerLookupField
+    );
+  }
+
+  @AuraEnabled(cacheable=false)
+  public static PaymentGatewaySchema.Contract getPaymentGatewaySchema(
+    String sessionToken,
+    String connectorKey
+  ) {
+    QuickbridgeAdminSecurity.requireSession(sessionToken);
+    return PaymentGatewaySchema.forGateway(connectorKey);
+  }
+
+  @AuraEnabled
+  public static QuickbridgeMappingController.SaveResponse savePaymentMappings(
+    String sessionToken,
+    String requestJson
+  ) {
+    QuickbridgeAdminSecurity.requireManage();
+    QuickbridgeAdminSecurity.requireSession(sessionToken);
+    QuickbridgeMappingController.SaveResponse response =
+      PaymentInvoiceMappingController.saveGatewayMappingConfig(requestJson);
+    QuickbridgeAdminSecurity.audit(
+      'PAYMENT_MAPPING_SAVE',
+      connectorFromPaymentRequest(requestJson),
+      response.status,
+      'PaymentInvoice',
+      null
+    );
+    return response;
+  }
+
   @AuraEnabled
   public static QuickbridgeMappingController.SaveResponse saveMappings(String sessionToken, String requestJson) {
     QuickbridgeAdminSecurity.requireManage();
@@ -58,6 +155,15 @@ public with sharing class QuickbridgeMappingFacade {
   public static QuickbridgeAssistantService.Analysis reviewMappingOperation(String sessionToken, String requestJson) {
     QuickbridgeAdminSecurity.requireSession(sessionToken);
     return QuickbridgeAssistantService.review(requestJson);
+  }
+
+  @AuraEnabled(cacheable=false)
+  public static QuickbridgeAssistantService.Analysis reviewPaymentMappings(
+    String sessionToken,
+    String requestJson
+  ) {
+    QuickbridgeAdminSecurity.requireSession(sessionToken);
+    return PaymentMappingReviewService.review(requestJson);
   }
 
   @AuraEnabled(cacheable=false)
@@ -115,6 +221,26 @@ public with sharing class QuickbridgeMappingFacade {
       return connectorKey.trim().toLowerCase();
     } catch (Exception error) {
       handled('Mapping request is invalid.');
+      return null;
+    }
+  }
+
+  private static String connectorFromPaymentRequest(String requestJson) {
+    try {
+      Map<String, Object> request =
+        (Map<String, Object>) JSON.deserializeUntyped(requestJson);
+      String connectorKey = request == null
+        ? null
+        : String.valueOf(request.get('gateway'));
+      if (
+        String.isBlank(connectorKey) ||
+        !Pattern.matches('^[A-Za-z0-9_-]{1,80}$', connectorKey)
+      ) {
+        handled('Payment mapping request is invalid.');
+      }
+      return connectorKey.trim().toLowerCase();
+    } catch (Exception error) {
+      handled('Payment mapping request is invalid.');
       return null;
     }
   }
