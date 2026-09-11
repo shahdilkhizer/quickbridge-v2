@@ -1,430 +1,528 @@
 <template>
   <div class="payment-mapping-layout">
-  <section class="mapping-container">
-    <template if:true={isLoading}>
-      <div class="loading-state">
-        <lightning-spinner
-          alternative-text="Loading invoice mappings"
-          size="medium"
-        ></lightning-spinner>
-      </div>
-    </template>
+    <section class="mapping-container">
+      <template if:true={isLoading}>
+        <div class="loading-state">
+          <lightning-spinner
+            alternative-text="Loading invoice mappings"
+            size="medium"
+          ></lightning-spinner>
+        </div>
+      </template>
 
-    <div class="mapping-header">
-      <div>
-        <p class="mapping-eyebrow">Payment Invoice Setup</p>
-        <h2 class="mapping-title">{gatewayLabel} invoice mappings</h2>
-        <p class="mapping-subtitle">
-          Configure the source, invoice record, and payment transaction mappings
-          for {gatewayLabel} invoice creation.
-        </p>
-      </div>
-      <lightning-button
-        variant="brand"
-        label={saveButtonLabel}
-        onclick={handleSave}
-        disabled={saveDisabled}
-      ></lightning-button>
-    </div>
-
-    <div class="mapping-section">
-      <div class="section-heading">
-        <lightning-button-icon
-          class="section-toggle-button"
-          icon-name={sourceToggleIcon}
-          variant="bare"
-          alternative-text="Toggle source object section"
-          data-section="source"
-          onclick={handleToggleSection}
-        >
-        </lightning-button-icon>
-        <div class="step-badge">1</div>
+      <aside class="mapping-readiness" aria-label="Mapping readiness">
         <div>
-          <h3 class="section-title">Source object</h3>
-          <p class="section-subtitle">
-            Pick the record type that starts invoice creation.
+          <span>Required mappings</span
+          ><strong>{requiredMapped} / {requiredTotal}</strong>
+        </div>
+        <lightning-progress-bar
+          value={mappingProgress}
+          size="small"
+        ></lightning-progress-bar>
+        <nav aria-label="Payment mapping steps">
+          <button
+            class={sourceStepClass}
+            data-section="source"
+            onclick={handleToggleSection}
+          >
+            1 Source</button
+          ><button
+            class={invoiceStepClass}
+            data-section="invoice"
+            onclick={handleToggleSection}
+          >
+            2 Invoice</button
+          ><button
+            class={transactionStepClass}
+            data-section="transaction"
+            onclick={handleToggleSection}
+          >
+            3 Transaction
+          </button>
+        </nav>
+        <p>
+          <strong>{blockerCount}</strong> blockers ·
+          <strong>{warningCount}</strong> warnings<template
+            lwc:if={mappingDirty}
+          >
+            · Unsaved changes</template
+          >
+        </p>
+      </aside>
+
+      <div class="mapping-header">
+        <div>
+          <p class="mapping-eyebrow">Payment Invoice Setup</p>
+          <h2 class="mapping-title">{gatewayLabel} invoice mappings</h2>
+          <p class="mapping-subtitle">
+            Configure the source, invoice record, and payment transaction
+            mappings for {gatewayLabel} invoice creation.
           </p>
         </div>
-        <lightning-input
-          class="mode-toggle"
-          type="toggle"
-          label="Use Standard Order"
-          checked={standardSourceChecked}
-          disabled={isBusy}
-          onchange={handleSourceModeChange}
-        >
-        </lightning-input>
+        <lightning-button
+          variant="brand"
+          label={saveButtonLabel}
+          onclick={handleSave}
+          disabled={saveDisabled}
+        ></lightning-button>
       </div>
 
-      <template if:true={showSourceBody}>
-        <div class="form-grid">
-          <lightning-combobox
-            label="Source Object"
-            value={sourceObjectValue}
-            options={sourceObjectUiOptions}
-            placeholder="Select source object"
-            disabled={isSourceObjectDisabled}
-            onchange={handleSourceObjectChange}
+      <div class="mapping-section" data-focus-key="source" tabindex="-1">
+        <div class="section-heading">
+          <lightning-button-icon
+            class="section-toggle-button"
+            icon-name={sourceToggleIcon}
+            variant="bare"
+            alternative-text="Toggle source object section"
+            data-section="source"
+            onclick={handleToggleSection}
           >
-          </lightning-combobox>
-          <lightning-combobox
-            label="Account or Contact Lookup"
-            value={config.sourceCustomerLookupField}
-            options={customerLookupOptions}
-            placeholder="Select customer lookup"
+          </lightning-button-icon>
+          <div class="step-badge">1</div>
+          <div>
+            <h3 class="section-title">Source object</h3>
+            <p class="section-subtitle">
+              Pick the record type that starts invoice creation.
+            </p>
+          </div>
+          <lightning-input
+            class="mode-toggle"
+            type="toggle"
+            label="Use Standard Order"
+            checked={standardSourceChecked}
             disabled={isBusy}
-            onchange={handleCustomerLookupChange}
-            required
+            onchange={handleSourceModeChange}
           >
-          </lightning-combobox>
-          <lightning-combobox
-            label="Customer Email"
-            value={config.sourceEmailField}
-            options={customerEmailOptions}
-            placeholder="Select customer email"
-            disabled={isBusy}
-            onchange={handleCustomerEmailChange}
-            required
-          >
-          </lightning-combobox>
+          </lightning-input>
         </div>
 
-        <div class="mapping-block">
-          <div class="mapping-block-title">Invoice request mapping</div>
-          <div class="mapping-grid header-row">
-            <div>Source field</div>
-            <div></div>
-            <div>{gatewayLabel} invoice input</div>
-            <div></div>
+        <template if:true={showSourceBody}>
+          <div class="form-grid">
+            <lightning-combobox
+              label="Source Object"
+              value={sourceObjectValue}
+              options={sourceObjectUiOptions}
+              placeholder="Select source object"
+              disabled={isSourceObjectDisabled}
+              onchange={handleSourceObjectChange}
+            >
+            </lightning-combobox>
+            <lightning-combobox
+              label="Account or Contact Lookup"
+              value={config.sourceCustomerLookupField}
+              options={customerLookupOptions}
+              placeholder="Select customer lookup"
+              disabled={isBusy}
+              onchange={handleCustomerLookupChange}
+              required
+            >
+            </lightning-combobox>
+            <lightning-combobox
+              label="Customer Email"
+              value={config.sourceEmailField}
+              options={customerEmailOptions}
+              placeholder="Select customer email"
+              disabled={isBusy}
+              onchange={handleCustomerEmailChange}
+              required
+            >
+            </lightning-combobox>
           </div>
-          <template for:each={sourceRowsWithOptions} for:item="row">
-            <div key={row.id} class="mapping-grid data-row">
-              <lightning-combobox
-                data-id={row.id}
-                data-field="sourceField"
-                variant="label-hidden"
-                value={row.sourceField}
-                options={row.filteredSourceOptions}
-                placeholder="Select source field"
-                disabled={row.lockSource}
-                onchange={handleSourceRowChange}
-              ></lightning-combobox>
-              <lightning-icon
-                icon-name="utility:forward"
-                size="xx-small"
-                class="arrow-icon"
-              ></lightning-icon>
-              <div class="mapped-field-cell">
+
+          <div class="mapping-block">
+            <div class="mapping-block-title">Invoice request mapping</div>
+            <div class="mapping-grid header-row">
+              <div>Source field</div>
+              <div></div>
+              <div>{gatewayLabel} invoice input</div>
+              <div></div>
+            </div>
+            <template for:each={sourceRowsWithOptions} for:item="row">
+              <div key={row.id} class="mapping-grid data-row">
+                <lightning-combobox
+                  data-id={row.id}
+                  data-field="sourceField"
+                  variant="label-hidden"
+                  value={row.sourceField}
+                  options={row.filteredSourceOptions}
+                  placeholder="Select source field"
+                  disabled={row.lockSource}
+                  onchange={handleSourceRowChange}
+                ></lightning-combobox>
+                <lightning-icon
+                  icon-name="utility:forward"
+                  size="xx-small"
+                  class="arrow-icon"
+                ></lightning-icon>
+                <div class="mapped-field-cell">
+                  <lightning-combobox
+                    data-id={row.id}
+                    data-field="targetField"
+                    variant="label-hidden"
+                    value={row.targetField}
+                    options={invoiceRequestFieldOptions}
+                    placeholder="Select invoice input"
+                    disabled={row.lockTarget}
+                    onchange={handleSourceRowChange}
+                  ></lightning-combobox>
+                  <template if:true={row.isRequired}>
+                    <span class="required-badge">Required</span>
+                  </template>
+                </div>
+                <lightning-button-icon
+                  icon-name="utility:delete"
+                  variant="bare"
+                  alternative-text="Remove row"
+                  data-id={row.id}
+                  onclick={removeSourceRow}
+                  disabled={row.isRequired}
+                ></lightning-button-icon>
+              </div>
+            </template>
+            <lightning-button
+              class="add-row-button"
+              variant="neutral"
+              label="Add Request Mapping"
+              onclick={addSourceRow}
+            ></lightning-button>
+          </div>
+        </template>
+      </div>
+
+      <div class={invoiceSectionClass} data-focus-key="invoice" tabindex="-1">
+        <div class="section-heading">
+          <lightning-button-icon
+            class="section-toggle-button"
+            icon-name={invoiceToggleIcon}
+            variant="bare"
+            alternative-text="Toggle invoice record section"
+            data-section="invoice"
+            onclick={handleToggleSection}
+          >
+          </lightning-button-icon>
+          <div class="step-badge">2</div>
+          <div>
+            <h3 class="section-title">Invoice record</h3>
+            <p class="section-subtitle">
+              Choose where the Salesforce invoice record is created after
+              {gatewayLabel} invoice generation.
+            </p>
+          </div>
+          <lightning-input
+            class="mode-toggle"
+            type="toggle"
+            label="Use Packaged Invoice"
+            checked={standardInvoiceChecked}
+            disabled={isInvoiceLocked}
+            onchange={handleInvoiceModeChange}
+          >
+          </lightning-input>
+        </div>
+
+        <template if:true={isInvoiceLocked}>
+          <div class="section-lock-note">
+            Complete the source object, customer lookup, and required amount
+            mapping before configuring invoice records.
+          </div>
+        </template>
+
+        <template if:true={showInvoiceBody}>
+          <div class="form-grid">
+            <lightning-combobox
+              label="Invoice Object"
+              value={invoiceObjectValue}
+              options={invoiceObjectOptions}
+              placeholder="Select invoice object"
+              disabled={isInvoiceObjectDisabled}
+              onchange={handleInvoiceObjectChange}
+            >
+            </lightning-combobox>
+            <lightning-combobox
+              label="Lookup to Source Object"
+              value={config.invoiceSourceLookupField}
+              options={invoiceLookupOptions}
+              placeholder="Select lookup field"
+              disabled={isBusy}
+              onchange={handleInvoiceLookupChange}
+              required
+            >
+            </lightning-combobox>
+          </div>
+
+          <template if:true={hasNoCustomInvoiceObjects}>
+            <div class="instruction-note">
+              No invoice objects currently have a lookup to {sourceObjectValue}.
+              Add a lookup field on your desired invoice object in Object
+              Manager, set the lookup target to {sourceObjectValue}, then return
+              here and refresh the mapping screen.
+            </div>
+          </template>
+
+          <div class="mapping-block">
+            <div class="mapping-block-title">Invoice record field mapping</div>
+            <div class="mapping-grid header-row">
+              <div>Source field</div>
+              <div></div>
+              <div>Invoice field</div>
+              <div></div>
+            </div>
+            <template for:each={invoiceRowsWithOptions} for:item="row">
+              <div key={row.id} class="mapping-grid data-row">
+                <div class="mapped-field-cell">
+                  <lightning-combobox
+                    data-id={row.id}
+                    data-field="sourceField"
+                    variant="label-hidden"
+                    value={row.sourceField}
+                    options={invoiceRecordSourceFieldOptions}
+                    placeholder="Select invoice value"
+                    disabled={row.lockSource}
+                    onchange={handleInvoiceRowChange}
+                  ></lightning-combobox>
+                  <template if:true={row.isRequired}>
+                    <span class="required-badge">Required</span>
+                  </template>
+                  <template if:true={row.isOptional}>
+                    <span class="optional-badge">Optional</span>
+                  </template>
+                </div>
+                <lightning-icon
+                  icon-name="utility:forward"
+                  size="xx-small"
+                  class="arrow-icon"
+                ></lightning-icon>
                 <lightning-combobox
                   data-id={row.id}
                   data-field="targetField"
                   variant="label-hidden"
                   value={row.targetField}
-                  options={invoiceRequestFieldOptions}
-                  placeholder="Select invoice input"
-                  disabled={row.lockTarget}
-                  onchange={handleSourceRowChange}
-                ></lightning-combobox>
-                <template if:true={row.isRequired}>
-                  <span class="required-badge">Required</span>
-                </template>
-              </div>
-              <lightning-button-icon
-                icon-name="utility:delete"
-                variant="bare"
-                alternative-text="Remove row"
-                data-id={row.id}
-                onclick={removeSourceRow}
-                disabled={row.isRequired}
-              ></lightning-button-icon>
-            </div>
-          </template>
-          <lightning-button
-            class="add-row-button"
-            variant="neutral"
-            label="Add Request Mapping"
-            onclick={addSourceRow}
-          ></lightning-button>
-        </div>
-      </template>
-    </div>
-
-    <div class={invoiceSectionClass}>
-      <div class="section-heading">
-        <lightning-button-icon
-          class="section-toggle-button"
-          icon-name={invoiceToggleIcon}
-          variant="bare"
-          alternative-text="Toggle invoice record section"
-          data-section="invoice"
-          onclick={handleToggleSection}
-        >
-        </lightning-button-icon>
-        <div class="step-badge">2</div>
-        <div>
-          <h3 class="section-title">Invoice record</h3>
-          <p class="section-subtitle">
-            Choose where the Salesforce invoice record is created after
-            {gatewayLabel} invoice generation.
-          </p>
-        </div>
-        <lightning-input
-          class="mode-toggle"
-          type="toggle"
-          label="Use Packaged Invoice"
-          checked={standardInvoiceChecked}
-          disabled={isInvoiceLocked}
-          onchange={handleInvoiceModeChange}
-        >
-        </lightning-input>
-      </div>
-
-      <template if:true={isInvoiceLocked}>
-        <div class="section-lock-note">
-          Complete the source object, customer lookup, and required amount
-          mapping before configuring invoice records.
-        </div>
-      </template>
-
-      <template if:true={showInvoiceBody}>
-        <div class="form-grid">
-          <lightning-combobox
-            label="Invoice Object"
-            value={invoiceObjectValue}
-            options={invoiceObjectOptions}
-            placeholder="Select invoice object"
-            disabled={isInvoiceObjectDisabled}
-            onchange={handleInvoiceObjectChange}
-          >
-          </lightning-combobox>
-          <lightning-combobox
-            label="Lookup to Source Object"
-            value={config.invoiceSourceLookupField}
-            options={invoiceLookupOptions}
-            placeholder="Select lookup field"
-            disabled={isBusy}
-            onchange={handleInvoiceLookupChange}
-            required
-          >
-          </lightning-combobox>
-        </div>
-
-        <template if:true={hasNoCustomInvoiceObjects}>
-          <div class="instruction-note">
-            No invoice objects currently have a lookup to {sourceObjectValue}.
-            Add a lookup field on your desired invoice object in Object Manager,
-            set the lookup target to {sourceObjectValue}, then return here and
-            refresh the mapping screen.
-          </div>
-        </template>
-
-        <div class="mapping-block">
-          <div class="mapping-block-title">Invoice record field mapping</div>
-          <div class="mapping-grid header-row">
-            <div>Source field</div>
-            <div></div>
-            <div>Invoice field</div>
-            <div></div>
-          </div>
-          <template for:each={invoiceRowsWithOptions} for:item="row">
-            <div key={row.id} class="mapping-grid data-row">
-              <div class="mapped-field-cell">
-                <lightning-combobox
-                  data-id={row.id}
-                  data-field="sourceField"
-                  variant="label-hidden"
-                  value={row.sourceField}
-                  options={invoiceRecordSourceFieldOptions}
-                  placeholder="Select invoice value"
-                  disabled={row.lockSource}
+                  options={row.filteredTargetOptions}
+                  placeholder="Select invoice field"
+                  disabled={row.isTargetDisabled}
                   onchange={handleInvoiceRowChange}
                 ></lightning-combobox>
-                <template if:true={row.isRequired}>
-                  <span class="required-badge">Required</span>
-                </template>
-                <template if:true={row.isOptional}>
-                  <span class="optional-badge">Optional</span>
-                </template>
+                <lightning-button-icon
+                  icon-name="utility:delete"
+                  variant="bare"
+                  alternative-text="Remove row"
+                  data-id={row.id}
+                  onclick={removeInvoiceRow}
+                  disabled={row.isPinned}
+                ></lightning-button-icon>
               </div>
-              <lightning-icon
-                icon-name="utility:forward"
-                size="xx-small"
-                class="arrow-icon"
-              ></lightning-icon>
-              <lightning-combobox
-                data-id={row.id}
-                data-field="targetField"
-                variant="label-hidden"
-                value={row.targetField}
-                options={row.filteredTargetOptions}
-                placeholder="Select invoice field"
-                disabled={row.isTargetDisabled}
-                onchange={handleInvoiceRowChange}
-              ></lightning-combobox>
-              <lightning-button-icon
-                icon-name="utility:delete"
-                variant="bare"
-                alternative-text="Remove row"
-                data-id={row.id}
-                onclick={removeInvoiceRow}
-                disabled={row.isPinned}
-              ></lightning-button-icon>
-            </div>
-          </template>
-          <lightning-button
-            class="add-row-button"
-            variant="neutral"
-            label="Add Invoice Mapping"
-            onclick={addInvoiceRow}
-          ></lightning-button>
-        </div>
-      </template>
-    </div>
-
-    <div class={transactionSectionClass}>
-      <div class="section-heading">
-        <lightning-button-icon
-          class="section-toggle-button"
-          icon-name={transactionToggleIcon}
-          variant="bare"
-          alternative-text="Toggle payment transaction section"
-          data-section="transaction"
-          onclick={handleToggleSection}
-        >
-        </lightning-button-icon>
-        <div class="step-badge">3</div>
-        <div>
-          <h3 class="section-title">Payment transaction record</h3>
-          <p class="section-subtitle">
-            Choose where paid invoice webhook data is stored after the customer
-            pays.
-          </p>
-        </div>
-        <lightning-input
-          class="mode-toggle"
-          type="toggle"
-          label="Use Packaged Transaction"
-          checked={standardTransactionChecked}
-          disabled={isTransactionLocked}
-          onchange={handleTransactionModeChange}
-        >
-        </lightning-input>
+            </template>
+            <lightning-button
+              class="add-row-button"
+              variant="neutral"
+              label="Add Invoice Mapping"
+              onclick={addInvoiceRow}
+            ></lightning-button>
+          </div>
+        </template>
       </div>
 
-      <template if:true={isTransactionLocked}>
-        <div class="section-lock-note">
-          Complete the source object, customer lookup, and required amount
-          mapping before configuring payment transaction records.
-        </div>
-      </template>
-
-      <template if:true={showTransactionBody}>
-        <div class="form-grid">
-          <lightning-combobox
-            label="Transaction Object"
-            value={transactionObjectValue}
-            options={transactionObjectOptions}
-            placeholder="Select transaction object"
-            disabled={isTransactionObjectDisabled}
-            onchange={handleTransactionObjectChange}
+      <div
+        class={transactionSectionClass}
+        data-focus-key="transaction"
+        tabindex="-1"
+      >
+        <div class="section-heading">
+          <lightning-button-icon
+            class="section-toggle-button"
+            icon-name={transactionToggleIcon}
+            variant="bare"
+            alternative-text="Toggle payment transaction section"
+            data-section="transaction"
+            onclick={handleToggleSection}
           >
-          </lightning-combobox>
-          <lightning-combobox
-            label="Lookup to Source Object"
-            value={config.transactionSourceLookupField}
-            options={transactionLookupOptions}
-            placeholder="Select lookup field"
-            disabled={isBusy}
-            onchange={handleTransactionLookupChange}
-            required
+          </lightning-button-icon>
+          <div class="step-badge">3</div>
+          <div>
+            <h3 class="section-title">Payment transaction record</h3>
+            <p class="section-subtitle">
+              Choose where paid invoice webhook data is stored after the
+              customer pays.
+            </p>
+          </div>
+          <lightning-input
+            class="mode-toggle"
+            type="toggle"
+            label="Use Packaged Transaction"
+            checked={standardTransactionChecked}
+            disabled={isTransactionLocked}
+            onchange={handleTransactionModeChange}
           >
-          </lightning-combobox>
+          </lightning-input>
         </div>
 
-        <template if:true={hasNoCustomTransactionObjects}>
-          <div class="instruction-note">
-            No payment transaction objects currently have a lookup to
-            {sourceObjectValue}. Add a lookup field on your desired transaction
-            object in Object Manager, set the lookup target to
-            {sourceObjectValue}, then return here and refresh the mapping
-            screen.
+        <template if:true={isTransactionLocked}>
+          <div class="section-lock-note">
+            Complete the source object, customer lookup, and required amount
+            mapping before configuring payment transaction records.
           </div>
         </template>
 
-        <div class="mapping-block">
-          <div class="mapping-block-title">
-            {gatewayLabel} webhook to transaction mapping
+        <template if:true={showTransactionBody}>
+          <div class="form-grid">
+            <lightning-combobox
+              label="Transaction Object"
+              value={transactionObjectValue}
+              options={transactionObjectOptions}
+              placeholder="Select transaction object"
+              disabled={isTransactionObjectDisabled}
+              onchange={handleTransactionObjectChange}
+            >
+            </lightning-combobox>
+            <lightning-combobox
+              label="Lookup to Source Object"
+              value={config.transactionSourceLookupField}
+              options={transactionLookupOptions}
+              placeholder="Select lookup field"
+              disabled={isBusy}
+              onchange={handleTransactionLookupChange}
+              required
+            >
+            </lightning-combobox>
           </div>
-          <div class="mapping-grid header-row">
-            <div>{gatewayLabel} webhook field</div>
-            <div></div>
-            <div>Transaction field</div>
-            <div></div>
-          </div>
-          <template for:each={transactionRowsWithOptions} for:item="row">
-            <div key={row.id} class="mapping-grid data-row">
-              <div class="mapped-field-cell">
-                <lightning-combobox
-                  data-id={row.id}
-                  data-field="sourceField"
-                  variant="label-hidden"
-                  value={row.sourceField}
-                  options={gatewayTransactionFieldOptions}
-                  placeholder="Select gateway field"
-                  disabled={row.lockSource}
-                  onchange={handleTransactionRowChange}
-                ></lightning-combobox>
-                <template if:true={row.isRequired}>
-                  <span class="required-badge">Required</span>
-                </template>
-                <template if:true={row.isOptional}>
-                  <span class="optional-badge">Optional</span>
-                </template>
-              </div>
-              <lightning-icon
-                icon-name="utility:forward"
-                size="xx-small"
-                class="arrow-icon"
-              ></lightning-icon>
-              <lightning-combobox
-                data-id={row.id}
-                data-field="targetField"
-                variant="label-hidden"
-                value={row.targetField}
-                options={row.filteredTargetOptions}
-                placeholder="Select transaction field"
-                disabled={row.isTargetDisabled}
-                onchange={handleTransactionRowChange}
-              ></lightning-combobox>
-              <lightning-button-icon
-                icon-name="utility:delete"
-                variant="bare"
-                alternative-text="Remove row"
-                data-id={row.id}
-                onclick={removeTransactionRow}
-                disabled={row.isPinned}
-              ></lightning-button-icon>
+
+          <template if:true={hasNoCustomTransactionObjects}>
+            <div class="instruction-note">
+              No payment transaction objects currently have a lookup to
+              {sourceObjectValue}. Add a lookup field on your desired
+              transaction object in Object Manager, set the lookup target to
+              {sourceObjectValue}, then return here and refresh the mapping
+              screen.
             </div>
           </template>
-          <lightning-button
-            class="add-row-button"
-            variant="neutral"
-            label="Add Transaction Mapping"
-            onclick={addTransactionRow}
-          ></lightning-button>
-        </div>
-      </template>
-    </div>
-  </section>
-  <c-quickbridge-mapping-assistant
-    operation={assistantOperation}
-    connector-label={gatewayLabel}
-    analysis={mappingAnalysis}
-    loading={mappingAnalysisLoading}
-    error-message={mappingAnalysisError}
-    allow-apply={assistantCanApply}
-    onreview={handleReviewPaymentMappings}
-    onapplysuggestions={handleApplyPaymentSuggestions}
-  ></c-quickbridge-mapping-assistant>
+
+          <div class="mapping-block">
+            <div class="mapping-block-title">
+              {gatewayLabel} webhook to transaction mapping
+            </div>
+            <div class="mapping-grid header-row">
+              <div>{gatewayLabel} webhook field</div>
+              <div></div>
+              <div>Transaction field</div>
+              <div></div>
+            </div>
+            <template for:each={transactionRowsWithOptions} for:item="row">
+              <div key={row.id} class="mapping-grid data-row">
+                <div class="mapped-field-cell">
+                  <lightning-combobox
+                    data-id={row.id}
+                    data-field="sourceField"
+                    variant="label-hidden"
+                    value={row.sourceField}
+                    options={gatewayTransactionFieldOptions}
+                    placeholder="Select gateway field"
+                    disabled={row.lockSource}
+                    onchange={handleTransactionRowChange}
+                  ></lightning-combobox>
+                  <template if:true={row.isRequired}>
+                    <span class="required-badge">Required</span>
+                  </template>
+                  <template if:true={row.isOptional}>
+                    <span class="optional-badge">Optional</span>
+                  </template>
+                </div>
+                <lightning-icon
+                  icon-name="utility:forward"
+                  size="xx-small"
+                  class="arrow-icon"
+                ></lightning-icon>
+                <lightning-combobox
+                  data-id={row.id}
+                  data-field="targetField"
+                  variant="label-hidden"
+                  value={row.targetField}
+                  options={row.filteredTargetOptions}
+                  placeholder="Select transaction field"
+                  disabled={row.isTargetDisabled}
+                  onchange={handleTransactionRowChange}
+                ></lightning-combobox>
+                <lightning-button-icon
+                  icon-name="utility:delete"
+                  variant="bare"
+                  alternative-text="Remove row"
+                  data-id={row.id}
+                  onclick={removeTransactionRow}
+                  disabled={row.isPinned}
+                ></lightning-button-icon>
+              </div>
+            </template>
+            <lightning-button
+              class="add-row-button"
+              variant="neutral"
+              label="Add Transaction Mapping"
+              onclick={addTransactionRow}
+            ></lightning-button>
+          </div>
+        </template>
+      </div>
+    </section>
+    <c-quickbridge-mapping-assistant
+      operation={assistantOperation}
+      connector-label={gatewayLabel}
+      analysis={mappingAnalysis}
+      loading={mappingAnalysisLoading}
+      error-message={mappingAnalysisError}
+      allow-apply={assistantCanApply}
+      onreview={handleReviewPaymentMappings}
+      onapplysuggestions={handleApplyPaymentSuggestions}
+    ></c-quickbridge-mapping-assistant>
   </div>
+
+  <template lwc:if={saveReviewOpen}>
+    <section
+      role="dialog"
+      tabindex="-1"
+      aria-modal="true"
+      aria-labelledby="mapping-review-title"
+      class="slds-modal slds-fade-in-open"
+    >
+      <div class="slds-modal__container">
+        <header class="slds-modal__header">
+          <h2 id="mapping-review-title" class="slds-modal__title">
+            Review mapping changes
+          </h2>
+        </header>
+        <div class="slds-modal__content slds-p-around_medium review-content">
+          <p>
+            {requiredMapped} of {requiredTotal} required mappings are complete.
+            {warningCount} warning(s) remain.
+          </p>
+          <template lwc:if={blockerCount}
+            ><div class="review-blockers" role="alert">
+              <h3>Resolve these blockers before saving</h3>
+              <template
+                for:each={mappingAnalysis.missingRequiredFields}
+                for:item="item"
+                ><p key={item.key}>{item.message}</p></template
+              >
+            </div></template
+          ><template lwc:if={warningCount}
+            ><div class="review-warnings">
+              <h3>Non-blocking warnings</h3>
+              <template for:each={mappingAnalysis.risks} for:item="item"
+                ><p key={item.key}>{item.message}</p></template
+              >
+            </div></template
+          >
+        </div>
+        <footer class="slds-modal__footer">
+          <lightning-button
+            label="Continue editing"
+            onclick={closeSaveReview}
+          ></lightning-button
+          ><lightning-button
+            variant="brand"
+            label="Save changes"
+            onclick={confirmSave}
+            disabled={reviewSaveDisabled}
+          ></lightning-button>
+        </footer>
+      </div>
+    </section>
+    <div class="slds-backdrop slds-backdrop_open"></div>
+  </template>
 </template>

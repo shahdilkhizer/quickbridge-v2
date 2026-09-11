@@ -83,6 +83,8 @@ export default class InvoiceMappingTool extends LightningElement {
     invoice: false,
     transaction: false
   };
+  savedMappingSignature;
+  saveReviewOpen = false;
 
   useCustomSource = false;
   useCustomInvoice = false;
@@ -114,6 +116,57 @@ export default class InvoiceMappingTool extends LightningElement {
 
   get assistantCanApply() {
     return !this.isBusy && !this.mappingAnalysisLoading;
+  }
+
+  get mappingDirty() {
+    return (
+      Boolean(this.savedMappingSignature) &&
+      this.currentMappingSignature() !== this.savedMappingSignature
+    );
+  }
+
+  get requiredMapped() {
+    return Number(this.mappingAnalysis?.requiredFieldsMapped || 0);
+  }
+  get requiredTotal() {
+    return Number(this.mappingAnalysis?.requiredFieldsTotal || 0);
+  }
+  get mappingProgress() {
+    return this.requiredTotal
+      ? Math.round((this.requiredMapped * 100) / this.requiredTotal)
+      : 0;
+  }
+  get blockerCount() {
+    return (this.mappingAnalysis?.missingRequiredFields || []).length;
+  }
+  get warningCount() {
+    return (this.mappingAnalysis?.risks || []).length;
+  }
+  get reviewSaveDisabled() {
+    return (
+      !this.mappingAnalysis ||
+      Boolean(this.mappingAnalysisError) ||
+      this.blockerCount > 0
+    );
+  }
+  get sourceStepClass() {
+    return this.isSourceComplete
+      ? "guided-step complete"
+      : "guided-step current";
+  }
+  get invoiceStepClass() {
+    return this.isInvoiceLocked
+      ? "guided-step locked"
+      : this.invoiceRows.every((row) => row.sourceField && row.targetField)
+        ? "guided-step complete"
+        : "guided-step current";
+  }
+  get transactionStepClass() {
+    return this.isTransactionLocked
+      ? "guided-step locked"
+      : this.transactionRows.every((row) => row.sourceField && row.targetField)
+        ? "guided-step complete"
+        : "guided-step current";
   }
 
   get gatewayLabel() {
@@ -341,23 +394,19 @@ export default class InvoiceMappingTool extends LightningElement {
   async loadInitialState() {
     this.isLoading = true;
     try {
-      const [
-        savedConfig,
-        sourceObjects,
-        targetObjects,
-        schema
-      ] = await Promise.all([
-        getGatewayMappingConfig({
-          sessionToken: this.sessionToken,
-          connectorKey: this.gateway
-        }),
-        getEligibleSourceObjects({ sessionToken: this.sessionToken }),
-        getCreateableObjects({ sessionToken: this.sessionToken }),
-        getPaymentGatewaySchema({
-          sessionToken: this.sessionToken,
-          connectorKey: this.gateway
-        })
-      ]);
+      const [savedConfig, sourceObjects, targetObjects, schema] =
+        await Promise.all([
+          getGatewayMappingConfig({
+            sessionToken: this.sessionToken,
+            connectorKey: this.gateway
+          }),
+          getEligibleSourceObjects({ sessionToken: this.sessionToken }),
+          getCreateableObjects({ sessionToken: this.sessionToken }),
+          getPaymentGatewaySchema({
+            sessionToken: this.sessionToken,
+            connectorKey: this.gateway
+          })
+        ]);
 
       this.paymentSchema = schema || this.paymentSchema;
       this.config = { ...this.emptyConfig(), ...(savedConfig || {}) };
@@ -399,6 +448,7 @@ export default class InvoiceMappingTool extends LightningElement {
       } else {
         this.syncLockedSections();
       }
+      this.savedMappingSignature = this.currentMappingSignature();
     } catch (error) {
       this.showToast(
         "Error",
@@ -850,6 +900,18 @@ export default class InvoiceMappingTool extends LightningElement {
       return;
     }
 
+    await this.handleReviewPaymentMappings();
+    this.saveReviewOpen = true;
+  }
+
+  closeSaveReview() {
+    this.saveReviewOpen = false;
+  }
+
+  async confirmSave() {
+    if (this.reviewSaveDisabled) return;
+    this.saveReviewOpen = false;
+
     this.isSaving = true;
     try {
       const payload = {
@@ -1261,7 +1323,18 @@ export default class InvoiceMappingTool extends LightningElement {
         }
       })
     );
+    this.dispatchEvent(
+      new CustomEvent("mappingdirtychange", {
+        bubbles: true,
+        composed: true,
+        detail: { dirty: this.mappingDirty }
+      })
+    );
     this.schedulePaymentReview();
+  }
+
+  currentMappingSignature() {
+    return JSON.stringify(this.paymentReviewRequest());
   }
 
   paymentReviewRequest() {
@@ -1307,9 +1380,7 @@ export default class InvoiceMappingTool extends LightningElement {
         return;
       }
       if (status.status === "Failed") {
-        throw new Error(
-          status.message || "Payment mapping deployment failed."
-        );
+        throw new Error(status.message || "Payment mapping deployment failed.");
       }
       await new Promise((resolve) => {
         // eslint-disable-next-line @lwc/lwc/no-async-operation
@@ -1329,7 +1400,10 @@ export default class InvoiceMappingTool extends LightningElement {
     if (!this.sessionToken || this.isLoading) return;
     this.mappingAnalysisLoading = true;
     // eslint-disable-next-line @lwc/lwc/no-async-operation
-    this.analysisTimer = setTimeout(() => this.handleReviewPaymentMappings(), delay);
+    this.analysisTimer = setTimeout(
+      () => this.handleReviewPaymentMappings(),
+      delay
+    );
   }
 
   async handleReviewPaymentMappings() {

@@ -203,6 +203,59 @@
   margin-top: 0.85rem;
 }
 
+.mapping-readiness {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 2fr auto;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+  border: 1px solid #b8d4f5;
+  border-radius: 0.65rem;
+  background: #f7fbff;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 8%);
+}
+
+.mapping-readiness__stats,
+.mapping-readiness__actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.guided-step {
+  scroll-margin-top: 6rem;
+  border-left: 4px solid #c9d3df;
+  padding-left: 1rem;
+}
+
+.guided-step.complete {
+  border-left-color: #2e844a;
+}
+.guided-step.current {
+  border-left-color: #0b5cab;
+}
+.review-content h3 {
+  font-weight: 700;
+  margin-bottom: 0.4rem;
+}
+.review-blockers {
+  color: #8e1f0b;
+  background: #fef1ee;
+  padding: 0.75rem;
+  margin-top: 0.75rem;
+}
+.review-warnings {
+  color: #5c3b00;
+  background: #fff7df;
+  padding: 0.75rem;
+  margin-top: 0.75rem;
+}
+
 @media (max-width: 1050px) {
   .payment-mapping-layout {
     grid-template-columns: 1fr;
@@ -210,6 +263,10 @@
 }
 
 @media (max-width: 768px) {
+  .mapping-readiness {
+    position: static;
+    grid-template-columns: 1fr;
+  }
   .mapping-header,
   .section-heading {
     display: flex;

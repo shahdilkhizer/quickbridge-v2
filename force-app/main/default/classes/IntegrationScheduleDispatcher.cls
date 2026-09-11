@@ -4,7 +4,8 @@ public without sharing class IntegrationScheduleDispatcher {
   private static Map<String, String> connectorKeyByAlias;
 
   public static Integer dispatchDue() {
-    Integer available = Limits.getLimitQueueableJobs() - Limits.getQueueableJobs();
+    Integer available =
+      Limits.getLimitQueueableJobs() - Limits.getQueueableJobs();
     return dispatchDue(Math.min(MAX_DISPATCH_SIZE, available));
   }
 
@@ -23,11 +24,13 @@ public without sharing class IntegrationScheduleDispatcher {
         Direction__c,
         Lease_Token__c,
         Lease_Expires_At__c,
-        Next_Run_At__c
+        Next_Run_At__c,
+        Pending_Run_Key__c
       FROM Scheduled_Integration_Job__c
       WHERE
         (Status__c IN ('Ready', 'Active', 'Failed')
-        AND (Next_Run_At__c = NULL OR Next_Run_At__c <= :nowValue))
+        AND (Next_Run_At__c = NULL
+        OR Next_Run_At__c <= :nowValue))
         OR (Status__c IN ('Claimed', 'Running')
         AND Lease_Expires_At__c < :nowValue)
       LIMIT :dispatchSize
@@ -37,18 +40,27 @@ public without sharing class IntegrationScheduleDispatcher {
       return 0;
     }
 
-    Set<String> resourceKeys=new Set<String>();
-    for(Integration_Operation__mdt operation:[SELECT Connector_Key__c,Resource_Contract_JSON__c FROM Integration_Operation__mdt WHERE Active__c=true]) {
-      if(String.isNotBlank(operation.Resource_Contract_JSON__c)) resourceKeys.add(operation.Connector_Key__c.toLowerCase());
+    Set<String> resourceKeys = new Set<String>();
+    for (Integration_Operation__mdt operation : [
+      SELECT Connector_Key__c, Resource_Contract_JSON__c
+      FROM Integration_Operation__mdt
+      WHERE Active__c = TRUE
+    ]) {
+      if (String.isNotBlank(operation.Resource_Contract_JSON__c))
+        resourceKeys.add(operation.Connector_Key__c.toLowerCase());
     }
-    Set<String> activeResources=ConnectorConfigService.activeConnectorKeys(resourceKeys);
-    List<Scheduled_Integration_Job__c> enabledJobs=new List<Scheduled_Integration_Job__c>();
-    for(Scheduled_Integration_Job__c job:dueJobs) {
-      String key=normalizeConnector(job.Integration_Type__c);
-      if(!resourceKeys.contains(key) || activeResources.contains(key)) enabledJobs.add(job);
+    Set<String> activeResources = ConnectorConfigService.activeConnectorKeys(
+      resourceKeys
+    );
+    List<Scheduled_Integration_Job__c> enabledJobs = new List<Scheduled_Integration_Job__c>();
+    for (Scheduled_Integration_Job__c job : dueJobs) {
+      String key = normalizeConnector(job.Integration_Type__c);
+      if (!resourceKeys.contains(key) || activeResources.contains(key))
+        enabledJobs.add(job);
     }
-    dueJobs=enabledJobs;
-    if(dueJobs.isEmpty()) return 0;
+    dueJobs = enabledJobs;
+    if (dueJobs.isEmpty())
+      return 0;
 
     for (Scheduled_Integration_Job__c job : dueJobs) {
       job.Status__c = 'Claimed';
@@ -59,8 +71,9 @@ public without sharing class IntegrationScheduleDispatcher {
     }
     Database.SaveResult[] claimResults = Database.update(dueJobs, false);
 
-    List<Scheduled_Integration_Job__c> updates =
-      new List<Scheduled_Integration_Job__c>();
+    List<Scheduled_Integration_Job__c> updates = new List<Scheduled_Integration_Job__c>();
+    Map<String, Id> asyncJobByRunKey = new Map<String, Id>();
+    Map<String, String> failedRunMessages = new Map<String, String>();
     Integer enqueued = 0;
     for (Integer index = 0; index < dueJobs.size(); index++) {
       if (!claimResults[index].isSuccess()) {
@@ -72,16 +85,27 @@ public without sharing class IntegrationScheduleDispatcher {
           new IntegrationScheduleProcessor(job.Id, job.Lease_Token__c)
         );
         job.Processor_Job_Id__c = String.valueOf(processorId);
+        if (String.isNotBlank(job.Pending_Run_Key__c)) {
+          asyncJobByRunKey.put(job.Pending_Run_Key__c, processorId);
+        }
         updates.add(job);
         enqueued++;
       } catch (Exception enqueueException) {
+        if (String.isNotBlank(job.Pending_Run_Key__c)) {
+          failedRunMessages.put(
+            job.Pending_Run_Key__c,
+            enqueueException.getMessage()
+          );
+          job.Pending_Run_Key__c = null;
+        }
         job.Status__c = 'Ready';
         job.Lease_Token__c = null;
         job.Lease_Expires_At__c = null;
         job.Processor_Job_Id__c = null;
         job.Next_Run_At__c = nowValue.addMinutes(1);
         job.Last_Error__c = safeError(
-          'Unable to enqueue scheduled integration: ' + enqueueException.getMessage()
+          'Unable to enqueue scheduled integration: ' +
+          enqueueException.getMessage()
         );
         updates.add(job);
       }
@@ -89,11 +113,14 @@ public without sharing class IntegrationScheduleDispatcher {
     if (!updates.isEmpty()) {
       Database.update(updates, false);
     }
+    IntegrationRunService.markQueued(asyncJobByRunKey);
+    IntegrationRunService.failQueuedRuns(failedRunMessages);
     return enqueued;
   }
 
   public static Datetime leaseExpiresAt(Datetime baseTime) {
-    return (baseTime == null ? System.now() : baseTime).addMinutes(LEASE_MINUTES);
+    return (baseTime == null ? System.now() : baseTime)
+      .addMinutes(LEASE_MINUTES);
   }
 
   public static void completeRun(
@@ -132,6 +159,7 @@ public without sharing class IntegrationScheduleDispatcher {
     job.Lease_Token__c = null;
     job.Lease_Expires_At__c = null;
     job.Processor_Job_Id__c = null;
+    job.Pending_Run_Key__c = null;
     job.Last_Run_At__c = nowValue;
     if (success == true) {
       job.Status__c = 'Active';
@@ -171,11 +199,16 @@ public without sharing class IntegrationScheduleDispatcher {
       ? 1
       : Math.max(1, frequencyValue.intValue());
     Datetime baseValue = baseTime == null ? System.now() : baseTime;
-    if (frequencyType == 'Minutes') return baseValue.addMinutes(amount);
-    if (frequencyType == 'Hours') return baseValue.addHours(amount);
-    if (frequencyType == 'Days') return baseValue.addDays(amount);
-    if (frequencyType == 'Weeks') return baseValue.addDays(amount * 7);
-    if (frequencyType == 'Months') return baseValue.addMonths(amount);
+    if (frequencyType == 'Minutes')
+      return baseValue.addMinutes(amount);
+    if (frequencyType == 'Hours')
+      return baseValue.addHours(amount);
+    if (frequencyType == 'Days')
+      return baseValue.addDays(amount);
+    if (frequencyType == 'Weeks')
+      return baseValue.addDays(amount * 7);
+    if (frequencyType == 'Months')
+      return baseValue.addMonths(amount);
     return baseValue.addHours(amount);
   }
 
@@ -188,7 +221,7 @@ public without sharing class IntegrationScheduleDispatcher {
       for (Integration_Connector__mdt connector : [
         SELECT Connector_Key__c, Integration_Type__c, Aliases__c
         FROM Integration_Connector__mdt
-        WHERE Enabled__c = true
+        WHERE Enabled__c = TRUE
       ]) {
         String connectorKey = normalizeToken(connector.Connector_Key__c);
         connectorKeyByAlias.put(connectorKey, connectorKey);
@@ -208,7 +241,8 @@ public without sharing class IntegrationScheduleDispatcher {
 
   private static Set<String> aliases(String csvValue) {
     Set<String> result = new Set<String>();
-    if (String.isBlank(csvValue)) return result;
+    if (String.isBlank(csvValue))
+      return result;
     for (String aliasValue : csvValue.split(',')) {
       result.add(normalizeToken(aliasValue));
     }
@@ -220,7 +254,8 @@ public without sharing class IntegrationScheduleDispatcher {
   }
 
   private static String newLeaseToken(Id scheduleId) {
-    String seed = String.valueOf(scheduleId) +
+    String seed =
+      String.valueOf(scheduleId) +
       ':' +
       UserInfo.getOrganizationId() +
       ':' +

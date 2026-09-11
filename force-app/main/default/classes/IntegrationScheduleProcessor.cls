@@ -1,5 +1,4 @@
-public without sharing class IntegrationScheduleProcessor
-  implements Queueable, Database.AllowsCallouts {
+public without sharing class IntegrationScheduleProcessor implements Queueable, Database.AllowsCallouts {
   private Id scheduleId;
   private String leaseToken;
 
@@ -17,6 +16,7 @@ public without sharing class IntegrationScheduleProcessor
         Direction__c,
         Status__c,
         Lease_Token__c,
+        Pending_Run_Key__c,
         Last_Run_At__c,
         Created_DateTime__c
       FROM Scheduled_Integration_Job__c
@@ -34,7 +34,25 @@ public without sharing class IntegrationScheduleProcessor
     String connectorKey = IntegrationScheduleDispatcher.normalizeConnector(
       job.Integration_Type__c
     );
-    String rawDirection = GenericIntegrationRuntime.normalizeDirectionForHandler(job.Direction__c);
+    Id integrationRunId;
+    try {
+      integrationRunId = IntegrationRunService.startForSchedule(
+        job.Id,
+        connectorKey,
+        job.Pending_Run_Key__c,
+        context == null ? null : context.getJobId()
+      );
+    } catch (Exception telemetryError) {
+      ConnectorScheduleService.completeFailure(
+        scheduleId,
+        leaseToken,
+        'Run history could not be initialized: ' + telemetryError.getMessage()
+      );
+      return;
+    }
+    String rawDirection = GenericIntegrationRuntime.normalizeDirectionForHandler(
+      job.Direction__c
+    );
     Integration_Operation__mdt matchedOp = resolveOperation(
       connectorKey,
       job.Source_Object__c,
@@ -43,19 +61,33 @@ public without sharing class IntegrationScheduleProcessor
 
     ConnectorExecutionRequest request = new ConnectorExecutionRequest();
     request.connectorKey = connectorKey;
-    request.operationKey = matchedOp != null ? matchedOp.Operation_Key__c : job.Source_Object__c;
+    request.operationKey = matchedOp != null
+      ? matchedOp.Operation_Key__c
+      : job.Source_Object__c;
     request.direction = matchedOp != null
-      ? GenericIntegrationRuntime.normalizeDirectionForHandler(matchedOp.Direction__c)
-      : (rawDirection == 'Inbound' ? ConnectorExecutionRequest.DIRECTION_INBOUND : ConnectorExecutionRequest.DIRECTION_OUTBOUND);
-    request.salesforceObject = matchedOp != null ? matchedOp.Salesforce_Object__c : job.Source_Object__c;
-    request.externalEntity = matchedOp != null ? matchedOp.External_Entity__c : null;
+      ? GenericIntegrationRuntime.normalizeDirectionForHandler(
+          matchedOp.Direction__c
+        )
+      : (rawDirection == 'Inbound'
+          ? ConnectorExecutionRequest.DIRECTION_INBOUND
+          : ConnectorExecutionRequest.DIRECTION_OUTBOUND);
+    request.salesforceObject = matchedOp != null
+      ? matchedOp.Salesforce_Object__c
+      : job.Source_Object__c;
+    request.externalEntity = matchedOp != null
+      ? matchedOp.External_Entity__c
+      : null;
     request.scheduleId = job.Id;
+    request.integrationRunId = integrationRunId;
     request.leaseToken = leaseToken;
-    request.correlationKey = String.valueOf(job.Id);
+    request.correlationKey = String.valueOf(integrationRunId);
     request.sinceValue = job.Last_Run_At__c != null
       ? job.Last_Run_At__c.addMinutes(-10)
-      : (job.Created_DateTime__c != null ? job.Created_DateTime__c.addDays(-1) : System.now().addDays(-7));
-    request.scopeSize = request.direction == ConnectorExecutionRequest.DIRECTION_OUTBOUND
+      : (job.Created_DateTime__c != null
+          ? job.Created_DateTime__c.addDays(-1)
+          : System.now().addDays(-7));
+    request.scopeSize = request.direction ==
+      ConnectorExecutionRequest.DIRECTION_OUTBOUND
       ? 50
       : 1;
     try {
@@ -65,15 +97,22 @@ public without sharing class IntegrationScheduleProcessor
           'scheduler.operation'
         )
       ) {
-        ConnectorExecutionResult scheduledResult =
-          ConnectorCapabilityRouter.scheduledAdapter(request.connectorKey)
-            .execute(job);
+        ConnectorExecutionResult scheduledResult = ConnectorCapabilityRouter.scheduledAdapter(
+            request.connectorKey
+          )
+          .execute(job);
         if (scheduledResult != null && scheduledResult.asyncJobId != null) {
-          if (!ConnectorScheduleService.markRunning(
-            scheduleId,
-            leaseToken,
+          IntegrationRunService.updateAsyncJob(
+            integrationRunId,
             scheduledResult.asyncJobId
-          )) {
+          );
+          if (
+            !ConnectorScheduleService.markRunning(
+              scheduleId,
+              leaseToken,
+              scheduledResult.asyncJobId
+            )
+          ) {
             ConnectorScheduleService.completeFailure(
               scheduleId,
               leaseToken,
@@ -81,11 +120,10 @@ public without sharing class IntegrationScheduleProcessor
             );
           }
         } else if (scheduledResult != null && !scheduledResult.hasFailures()) {
-          IntegrationScheduleDispatcher.completeRun(
+          ConnectorScheduleService.complete(
             scheduleId,
             leaseToken,
-            true,
-            null
+            scheduledResult
           );
         } else {
           ConnectorScheduleService.completeFailure(
@@ -98,14 +136,26 @@ public without sharing class IntegrationScheduleProcessor
         }
         return;
       }
-      GenericIntegrationRuntime.OperationDefinition definition =
-        GenericIntegrationRuntime.resolve(request);
+      GenericIntegrationRuntime.OperationDefinition definition = GenericIntegrationRuntime.resolve(
+        request
+      );
       request.salesforceObject = definition.salesforceObject;
       request.externalEntity = definition.externalEntity;
-      Id batchJobId = request.direction == ConnectorExecutionRequest.DIRECTION_OUTBOUND
-        ? Database.executeBatch(new OutboundIntegrationHandler(request), request.scopeSize)
+      Id batchJobId = request.direction ==
+        ConnectorExecutionRequest.DIRECTION_OUTBOUND
+        ? Database.executeBatch(
+            new OutboundIntegrationHandler(request),
+            request.scopeSize
+          )
         : Database.executeBatch(new InboundIntegrationHandler(request), 1);
-      if (!ConnectorScheduleService.markRunning(scheduleId, leaseToken, batchJobId)) {
+      IntegrationRunService.updateAsyncJob(integrationRunId, batchJobId);
+      if (
+        !ConnectorScheduleService.markRunning(
+          scheduleId,
+          leaseToken,
+          batchJobId
+        )
+      ) {
         ConnectorScheduleService.completeFailure(
           scheduleId,
           leaseToken,
@@ -134,16 +184,22 @@ public without sharing class IntegrationScheduleProcessor
         External_Entity__c,
         Request_Cardinality__c
       FROM Integration_Operation__mdt
-      WHERE Connector_Key__c = :connectorKey
-        AND Active__c = true
+      WHERE Connector_Key__c = :connectorKey AND Active__c = TRUE
     ];
     String requested = GenericIntegrationRuntime.normalize(sourceObject);
     for (Integration_Operation__mdt operation : operations) {
-      Boolean operationMatches = requested == GenericIntegrationRuntime.normalize(operation.Operation_Key__c) ||
-        requested == GenericIntegrationRuntime.normalize(operation.Salesforce_Object__c) ||
-        requested == GenericIntegrationRuntime.normalize(operation.External_Entity__c);
-      String opDir = GenericIntegrationRuntime.normalizeDirectionForHandler(operation.Direction__c);
-      Boolean directionMatches = String.isBlank(normalizedDirection) ||
+      Boolean operationMatches =
+        requested ==
+        GenericIntegrationRuntime.normalize(operation.Operation_Key__c) ||
+        requested ==
+        GenericIntegrationRuntime.normalize(operation.Salesforce_Object__c) ||
+        requested ==
+        GenericIntegrationRuntime.normalize(operation.External_Entity__c);
+      String opDir = GenericIntegrationRuntime.normalizeDirectionForHandler(
+        operation.Direction__c
+      );
+      Boolean directionMatches =
+        String.isBlank(normalizedDirection) ||
         normalizedDirection == opDir ||
         opDir == 'Bidirectional';
       if (operationMatches && directionMatches) {

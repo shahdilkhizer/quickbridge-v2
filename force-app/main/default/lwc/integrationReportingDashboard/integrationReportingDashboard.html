@@ -1,23 +1,126 @@
 <template>
-  <section aria-labelledby="report-title">
-    <div class="heading"><div><h1 id="report-title">Integration Reporting</h1><p>Subscription and runtime usage across Quickbridge products.</p></div><lightning-button-icon icon-name="utility:refresh" alternative-text="Refresh reporting" onclick={refresh}></lightning-button-icon></div>
-    <template lwc:if={loading}><div class="state"><lightning-spinner alternative-text="Loading reporting"></lightning-spinner></div></template>
-    <template lwc:if={errorMessage}><div class="alert" role="alert">{errorMessage}</div></template>
-    <template lwc:if={hasProducts}>
-      <div class="products">
-        <template for:each={products} for:item="product">
-          <article class="product" key={product.connectorKey}>
-            <div class="product-head"><div><h2>{product.label}</h2><span>{product.subscriptionLabel}</span></div><template lwc:if={product.expiryDate}><div class="expiry"><strong>{product.daysRemaining}</strong><span>days remaining</span></div></template></div>
-            <div class="metrics">
-              <div><span>Synced Records</span><strong>{product.syncedRecords}</strong><lightning-progress-bar value={product.syncedPercent} size="large"></lightning-progress-bar><small>Limit {product.syncedRecordLimit}</small></div>
-              <div><span>Errors</span><strong>{product.errors}</strong><lightning-progress-bar value={product.errorPercent} variant="circular" size="large"></lightning-progress-bar><small>Limit {product.errorLimit}</small></div>
-              <div><span>Endpoint Usage</span><strong>{product.endpointUsage}</strong><lightning-progress-bar value={product.endpointPercent} size="large"></lightning-progress-bar><small>Limit {product.endpointLimit}</small></div>
-              <div><span>Subscription</span><strong>{product.subscriptionLabel}</strong><small><lightning-formatted-date-time value={product.lastUpdatedLabel}></lightning-formatted-date-time></small></div>
-            </div>
+  <section class="reporting" aria-labelledby="report-title">
+    <header class="heading">
+      <div>
+        <p class="eyebrow">Quickbridge reporting</p>
+        <h1 id="report-title">Operational health</h1>
+        <p>{reportingScopeLabel} This view is read-only and uses current work, readiness, and schedule state.</p>
+      </div>
+      <lightning-button-icon
+        icon-name="utility:refresh"
+        alternative-text="Refresh operational reporting"
+        title="Refresh operational reporting"
+        onclick={refresh}
+        disabled={loading}>
+      </lightning-button-icon>
+    </header>
+
+    <template lwc:if={loading}>
+      <div class="state" aria-live="polite">
+        <lightning-spinner alternative-text="Loading operational reporting"></lightning-spinner>
+      </div>
+    </template>
+    <template lwc:if={errorMessage}>
+      <div class="alert" role="alert">{errorMessage}</div>
+    </template>
+    <template lwc:if={hasConnectors}>
+      <div class="kpi-grid" aria-label="Operational health key performance indicators">
+        <template for:each={kpis} for:item="kpi">
+          <article class={kpi.cssClass} key={kpi.key}>
+            <h2>{kpi.label}</h2>
+            <p class="kpi-value">{kpi.value}</p>
+            <p class="kpi-description">{kpi.description}</p>
           </article>
         </template>
       </div>
+
+      <section class="latest-success" data-id="latest-success" aria-labelledby="last-success-title">
+        <div>
+          <p class="eyebrow">Latest successful work</p>
+          <h2 id="last-success-title">Most recent completed work item</h2>
+        </div>
+        <template lwc:if={hasLastSuccessfulWork}>
+          <lightning-formatted-date-time
+            value={overview.lastSuccessfulWorkAt}
+            year="numeric"
+            month="short"
+            day="2-digit"
+            hour="2-digit"
+            minute="2-digit">
+          </lightning-formatted-date-time>
+        </template>
+        <template lwc:else>
+          <span class="muted">Not yet completed</span>
+        </template>
+      </section>
+
+      <section class="connector-section" aria-labelledby="connector-health-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Connector detail</p>
+            <h2 id="connector-health-title">Health by connector</h2>
+          </div>
+          <p>Work counts reflect current work-item status, not historical usage.</p>
+        </div>
+        <div class="connector-list">
+          <template for:each={overview.connectors} for:item="connector">
+            <article class="connector-row" key={connector.connectorKey}>
+              <div class="connector-heading">
+                <div>
+                  <h3>{connector.label}</h3>
+                  <p>{connector.health}</p>
+                </div>
+                <span class={connector.statusClass}>{connector.statusLabel}</span>
+              </div>
+              <dl class="connector-metrics">
+                <div>
+                  <dt>Completed</dt>
+                  <dd>{connector.completedWorkCount}</dd>
+                </div>
+                <div>
+                  <dt>Backlog</dt>
+                  <dd>{connector.backlogCount}</dd>
+                </div>
+                <div>
+                  <dt>Failed</dt>
+                  <dd>{connector.failedWorkCount}</dd>
+                </div>
+                <div>
+                  <dt>Schedules</dt>
+                  <dd>{connector.scheduleState}</dd>
+                  <template lwc:if={connector.nextScheduledRunAt}>
+                    <lightning-formatted-date-time
+                      value={connector.nextScheduledRunAt}
+                      year="numeric"
+                      month="short"
+                      day="2-digit"
+                      hour="2-digit"
+                      minute="2-digit">
+                    </lightning-formatted-date-time>
+                  </template>
+                  <template lwc:else>
+                    <span class="muted">Not scheduled</span>
+                  </template>
+                </div>
+              </dl>
+              <template lwc:if={connector.overdueScheduleCount}>
+                <p class="overdue-note">{connector.overdueScheduleCount} overdue schedule(s)</p>
+              </template>
+            </article>
+          </template>
+        </div>
+      </section>
     </template>
-    <template lwc:else><template lwc:if={loading}></template><template lwc:else><div class="empty"><lightning-icon icon-name="utility:chart" size="small"></lightning-icon><h2>No reporting data</h2><p>No enabled connector matches this view.</p></div></template></template>
+    <template lwc:if={loading}></template>
+    <template lwc:else>
+      <template lwc:if={hasConnectors}></template>
+      <template lwc:else>
+        <div class="empty">
+          <lightning-icon icon-name="utility:chart" size="small"></lightning-icon>
+          <h2>No enabled connector matches this view</h2>
+          <p>Select an enabled connector or return to the all-connectors Reporting view.</p>
+        </div>
+      </template>
+    </template>
   </section>
 </template>

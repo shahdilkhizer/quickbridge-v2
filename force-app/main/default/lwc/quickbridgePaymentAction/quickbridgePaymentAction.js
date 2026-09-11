@@ -43,7 +43,9 @@ export default class QuickbridgePaymentAction extends LightningElement {
       } else {
         throw new Error('The provider did not return a hosted payment URL.');
       }
-      this.message = `Hosted payment ${result.providerReference || ''} created.`;
+      this.message = result.reusedExisting
+        ? `Existing hosted payment ${result.providerReference || ''} opened.`
+        : `Hosted payment ${result.providerReference || ''} created.`;
     } catch (failure) {
       this.setError(failure);
     } finally {

@@ -10,23 +10,21 @@ public without sharing class IntegrationWorkService {
     if (requests == null || requests.isEmpty()) {
       return new List<Id>();
     }
-    Map<String, IntegrationWorkRequest> requestByKey =
-      new Map<String, IntegrationWorkRequest>();
+    Map<String, IntegrationWorkRequest> requestByKey = new Map<String, IntegrationWorkRequest>();
     for (IntegrationWorkRequest request : requests) {
       validate(request);
       requestByKey.put(uniqueKey(request), request);
     }
 
-    Map<String, Integration_Work_Item__c> existingByKey =
-      new Map<String, Integration_Work_Item__c>();
+    Map<String, Integration_Work_Item__c> existingByKey = new Map<String, Integration_Work_Item__c>();
     for (Integration_Work_Item__c row : [
       SELECT
         Id,
         Unique_Key__c,
         Status__c,
         Coalesced_Count__c,
-        Needs_Reprocess__c
-        ,Lifecycle_Action__c
+        Needs_Reprocess__c,
+        Lifecycle_Action__c
       FROM Integration_Work_Item__c
       WHERE Unique_Key__c IN :requestByKey.keySet()
       FOR UPDATE
@@ -46,7 +44,11 @@ public without sharing class IntegrationWorkService {
         inserts.add(row);
         existingByKey.put(keyValue, row);
       } else {
-        if (row.Lifecycle_Action__c == 'ChildChanged' && request.lifecycleAction == 'Save') request.lifecycleAction = 'ChildChanged';
+        if (
+          row.Lifecycle_Action__c == 'ChildChanged' &&
+          request.lifecycleAction == 'Save'
+        )
+          request.lifecycleAction = 'ChildChanged';
         Decimal coalescedCount = row.Coalesced_Count__c == null
           ? 0
           : row.Coalesced_Count__c;
@@ -75,8 +77,7 @@ public without sharing class IntegrationWorkService {
 
     List<Id> ids = new List<Id>();
     Map<String, Set<Id>> outcomeIdsByContext = new Map<String, Set<Id>>();
-    Map<String, IntegrationWorkRequest> sampleByContext =
-      new Map<String, IntegrationWorkRequest>();
+    Map<String, IntegrationWorkRequest> sampleByContext = new Map<String, IntegrationWorkRequest>();
     for (String keyValue : existingByKey.keySet()) {
       Integration_Work_Item__c row = existingByKey.get(keyValue);
       IntegrationWorkRequest request = requestByKey.get(keyValue);
@@ -84,8 +85,12 @@ public without sharing class IntegrationWorkService {
         ids.add(row.Id);
       }
       if (request.sourceRecordId != null) {
-        String contextKey = request.sourceRecordId.getSObjectType().getDescribe().getName() +
-          ':' + request.connectorKey.toLowerCase() + ':' + request.operationKey.toLowerCase();
+        String contextKey =
+          request.sourceRecordId.getSObjectType().getDescribe().getName() +
+          ':' +
+          request.connectorKey.toLowerCase() +
+          ':' +
+          request.operationKey.toLowerCase();
         if (!outcomeIdsByContext.containsKey(contextKey)) {
           outcomeIdsByContext.put(contextKey, new Set<Id>());
           sampleByContext.put(contextKey, request);
@@ -107,7 +112,11 @@ public without sharing class IntegrationWorkService {
     return ids;
   }
 
-  public static void markBatchRunning(Id workItemId, String token, Id batchJobId) {
+  public static void markBatchRunning(
+    Id workItemId,
+    String token,
+    Id batchJobId
+  ) {
     if (workItemId == null) {
       return;
     }
@@ -183,7 +192,8 @@ public without sharing class IntegrationWorkService {
       Integer maximum = row.Max_Attempts__c == null
         ? DEFAULT_MAX_ATTEMPTS
         : row.Max_Attempts__c.intValue();
-      Boolean retry = result != null &&
+      Boolean retry =
+        result != null &&
         result.retryable == true &&
         attempts < maximum;
       row.Status__c = retry ? STATUS_RETRY : STATUS_FAILED;
@@ -210,16 +220,16 @@ public without sharing class IntegrationWorkService {
         request.connectorKey,
         request.operationKey
       );
-      List<IntegrationErrorLogService.Failure> failures =
-        new List<IntegrationErrorLogService.Failure>();
+      List<IntegrationErrorLogService.Failure> failures = new List<IntegrationErrorLogService.Failure>();
       for (Id recordId : failedRecordIds) {
-        IntegrationErrorLogService.Failure failure =
-          new IntegrationErrorLogService.Failure();
+        IntegrationErrorLogService.Failure failure = new IntegrationErrorLogService.Failure();
         failure.workItemId = workItemId;
         failure.recordId = recordId;
         failure.connectorKey = request.connectorKey;
         failure.operationKey = request.operationKey;
-        failure.category = String.isBlank(result == null ? null : result.errorCategory)
+        failure.category = String.isBlank(
+            result == null ? null : result.errorCategory
+          )
           ? (retry ? 'Transient Integration Failure' : 'Integration Failure')
           : result.errorCategory;
         failure.message = row.Last_Error__c;
@@ -228,7 +238,9 @@ public without sharing class IntegrationWorkService {
         failure.retryCount = attempts;
         failure.maximumAttempts = maximum;
         failure.dmlOperation = result == null ? null : result.dmlOperation;
-        failure.classMethod = String.isBlank(result == null ? null : result.classMethod)
+        failure.classMethod = String.isBlank(
+            result == null ? null : result.classMethod
+          )
           ? 'IntegrationWorkService.complete'
           : result.classMethod;
         failures.add(failure);
@@ -248,14 +260,21 @@ public without sharing class IntegrationWorkService {
 
   public static void manualRetry(Id workItemId) {
     Integration_Work_Item__c row = [
-      SELECT Id, Status__c, Source_Salesforce_Id__c, Integration__c, Operation__c
+      SELECT
+        Id,
+        Status__c,
+        Source_Salesforce_Id__c,
+        Integration__c,
+        Operation__c
       FROM Integration_Work_Item__c
       WHERE Id = :workItemId
       LIMIT 1
       FOR UPDATE
     ];
     if (row.Status__c != STATUS_FAILED && row.Status__c != STATUS_RETRY) {
-      throw new AuraHandledException('Only failed or retrying work can be replayed.');
+      throw new AuraHandledException(
+        'Only failed or retrying work can be replayed.'
+      );
     }
     row.Status__c = STATUS_PENDING;
     row.Attempt_Count__c = 0;
@@ -269,6 +288,96 @@ public without sharing class IntegrationWorkService {
         row.Operation__c
       );
     }
+  }
+
+  public class ManualRetryResult {
+    public Id workItemId;
+    public Boolean successful;
+    public String message;
+  }
+
+  public static List<ManualRetryResult> manualRetry(List<Id> workItemIds) {
+    List<ManualRetryResult> results = new List<ManualRetryResult>();
+    if (workItemIds == null || workItemIds.isEmpty())
+      return results;
+    Set<Id> requestedIds = new Set<Id>(workItemIds);
+    if (requestedIds.size() > 50) {
+      throw new AuraHandledException('Select no more than 50 work items.');
+    }
+    Map<Id, Integration_Work_Item__c> rowsById = new Map<Id, Integration_Work_Item__c>(
+      [
+        SELECT
+          Id,
+          Status__c,
+          Source_Salesforce_Id__c,
+          Integration__c,
+          Operation__c
+        FROM Integration_Work_Item__c
+        WHERE Id IN :requestedIds
+        FOR UPDATE
+      ]
+    );
+    List<Integration_Work_Item__c> updates = new List<Integration_Work_Item__c>();
+    for (Id workItemId : requestedIds) {
+      ManualRetryResult result = new ManualRetryResult();
+      result.workItemId = workItemId;
+      Integration_Work_Item__c row = rowsById.get(workItemId);
+      if (row == null) {
+        result.successful = false;
+        result.message = 'Work item was not found.';
+        results.add(result);
+        continue;
+      }
+      if (row.Status__c != STATUS_FAILED && row.Status__c != STATUS_RETRY) {
+        result.successful = false;
+        result.message = 'Only failed or retrying work can be replayed.';
+        results.add(result);
+        continue;
+      }
+      row.Status__c = STATUS_PENDING;
+      row.Attempt_Count__c = 0;
+      row.Next_Attempt_At__c = System.now();
+      row.Last_Error__c = null;
+      updates.add(row);
+      results.add(result);
+    }
+    Database.SaveResult[] saved = Database.update(updates, false);
+    Map<Id, ManualRetryResult> resultById = new Map<Id, ManualRetryResult>();
+    for (ManualRetryResult item : results)
+      resultById.put(item.workItemId, item);
+    Map<String, Set<Id>> sourceIdsByOperation = new Map<String, Set<Id>>();
+    for (Integer index = 0; index < updates.size(); index++) {
+      ManualRetryResult result = resultById.get(updates[index].Id);
+      result.successful = saved[index].isSuccess();
+      result.message = saved[index].isSuccess()
+        ? 'Retry queued.'
+        : saved[index].getErrors()[0].getMessage();
+      if (
+        saved[index].isSuccess() &&
+        String.isNotBlank(updates[index].Source_Salesforce_Id__c)
+      ) {
+        try {
+          String key =
+            updates[index].Integration__c +
+            '|' +
+            updates[index].Operation__c;
+          if (!sourceIdsByOperation.containsKey(key))
+            sourceIdsByOperation.put(key, new Set<Id>());
+          sourceIdsByOperation.get(key)
+            .add(Id.valueOf(updates[index].Source_Salesforce_Id__c));
+        } catch (Exception ignored) {
+        }
+      }
+    }
+    for (String key : sourceIdsByOperation.keySet()) {
+      List<String> parts = key.split('\\|', 2);
+      IntegrationOutcomeService.markPending(
+        sourceIdsByOperation.get(key),
+        parts[0],
+        parts[1]
+      );
+    }
+    return results;
   }
 
   private static void applyRequest(
@@ -309,7 +418,8 @@ public without sharing class IntegrationWorkService {
       String.isBlank(request.connectorKey) ||
       String.isBlank(request.operationKey) ||
       String.isBlank(request.sourceObject) ||
-      (request.sourceRecordId == null && String.isBlank(request.sourceExternalId))
+      (request.sourceRecordId == null &&
+      String.isBlank(request.sourceExternalId))
     ) {
       throw new IntegrationWorkException(
         'Connector, operation, source object, and a source record or external identifier are required.'
@@ -319,12 +429,15 @@ public without sharing class IntegrationWorkService {
       !Pattern.matches('^[A-Za-z0-9_-]{1,80}$', request.connectorKey) ||
       !Pattern.matches('^[A-Za-z0-9_-]{1,80}$', request.operationKey)
     ) {
-      throw new IntegrationWorkException('Connector or operation key is invalid.');
+      throw new IntegrationWorkException(
+        'Connector or operation key is invalid.'
+      );
     }
   }
 
   private static String uniqueKey(IntegrationWorkRequest request) {
-    String raw = request.connectorKey.toLowerCase() +
+    String raw =
+      request.connectorKey.toLowerCase() +
       ':' +
       request.operationKey.toLowerCase() +
       ':' +
@@ -333,7 +446,9 @@ public without sharing class IntegrationWorkService {
         : 'record:' + String.valueOf(request.sourceRecordId));
     return raw.length() <= 255
       ? raw
-      : EncodingUtil.convertToHex(Crypto.generateDigest('SHA-256', Blob.valueOf(raw)));
+      : EncodingUtil.convertToHex(
+          Crypto.generateDigest('SHA-256', Blob.valueOf(raw))
+        );
   }
 
   private static String payloadHash(String payload) {
@@ -380,5 +495,6 @@ public without sharing class IntegrationWorkService {
     }
   }
 
-  public class IntegrationWorkException extends Exception {}
+  public class IntegrationWorkException extends Exception {
+  }
 }

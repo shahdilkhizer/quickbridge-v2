@@ -1,16 +1,160 @@
 <template>
   <section aria-labelledby="error-title">
-    <div class="heading"><div><h1 id="error-title">Error Log</h1><p>Sanitized failures and record-level retry history for this integration.</p></div><lightning-button-icon icon-name="utility:refresh" alternative-text="Refresh errors" onclick={load}></lightning-button-icon></div>
-    <div class="tabs" role="tablist"><button class={retryTabClass} data-mode="Retry" onclick={switchMode} role="tab">Retry Attempts</button><button class={pendingTabClass} data-mode="Pending" onclick={switchMode} role="tab">Pending Errors</button></div>
-    <template lwc:if={loading}><div class="state"><lightning-spinner alternative-text="Loading errors"></lightning-spinner></div></template>
-    <template lwc:if={errorMessage}><div class="alert" role="alert">{errorMessage}</div></template>
+    <div class="heading">
+      <div>
+        <h1 id="error-title">Error Log</h1>
+        <p>
+          Sanitized failures and record-level retry history for this
+          integration.
+        </p>
+      </div>
+      <lightning-button-icon
+        icon-name="utility:refresh"
+        alternative-text="Refresh errors"
+        onclick={load}
+      ></lightning-button-icon>
+    </div>
+    <div class="tabs" role="tablist">
+      <button
+        class={retryTabClass}
+        data-mode="Retry"
+        onclick={switchMode}
+        role="tab"
+      >
+        Retry Attempts</button
+      ><button
+        class={pendingTabClass}
+        data-mode="Pending"
+        onclick={switchMode}
+        role="tab"
+      >
+        Pending Errors
+      </button>
+    </div>
+    <div class="triage-filters" aria-label="Error filters">
+      <lightning-input
+        label="Category"
+        data-filter="category"
+        onchange={changeFilter}
+      ></lightning-input
+      ><lightning-input
+        label="Object API name"
+        data-filter="sourceObject"
+        onchange={changeFilter}
+      ></lightning-input
+      ><lightning-input
+        type="datetime"
+        label="From"
+        data-filter="fromDate"
+        onchange={changeFilter}
+      ></lightning-input
+      ><lightning-input
+        type="datetime"
+        label="To"
+        data-filter="toDate"
+        onchange={changeFilter}
+      ></lightning-input
+      ><lightning-button
+        variant="brand-outline"
+        label="Retry selected"
+        onclick={bulkRetry}
+        disabled={bulkRetryDisabled}
+      ></lightning-button>
+    </div>
+    <template lwc:if={loading}
+      ><div class="state">
+        <lightning-spinner
+          alternative-text="Loading errors"
+        ></lightning-spinner></div
+    ></template>
+    <template lwc:if={errorMessage}
+      ><div class="alert" role="alert">{errorMessage}</div></template
+    >
     <template lwc:if={hasRows}>
       <div class="table" role="table" aria-label="Integration errors">
-        <div class="row header" role="row"><span>Category</span><span>Message</span><span>Record</span><span>Retry Status</span><span>Created</span><span>Action</span></div>
-        <template for:each={rows} for:item="row"><div class="row" role="row" key={row.id}><span data-label="Category">{row.category}</span><span data-label="Message">{row.message}</span><span data-label="Record"><template lwc:if={row.recordUrl}><a href={row.recordUrl}>{row.sourceObject}: {row.sourceRecordId}</a></template><template lwc:else>{row.sourceObject}</template></span><span data-label="Retry Status">{row.retryStatus} ({row.retryCount})</span><span data-label="Created"><lightning-formatted-date-time value={row.createdAt}></lightning-formatted-date-time></span><span data-label="Action"><lightning-button-icon icon-name="utility:refresh" alternative-text="Retry" title={row.retryTitle} data-id={row.id} onclick={retry} disabled={row.retryDisabled}></lightning-button-icon></span></div></template>
+        <div class="row header" role="row">
+          <span>Select</span><span>Failure group</span><span>Details</span
+          ><span>Record</span><span>Retry</span><span>Latest</span
+          ><span>Action</span>
+        </div>
+        <template for:each={rows} for:item="row"
+          ><div class="row" role="row" key={row.id}>
+            <span data-label="Select"
+              ><lightning-input
+                type="checkbox"
+                variant="label-hidden"
+                label="Select retryable error"
+                checked={row.selected}
+                data-id={row.id}
+                onchange={selectRow}
+                disabled={row.retryDisabled}
+              ></lightning-input></span
+            ><span data-label="Failure group"
+              ><strong>{row.category}</strong
+              ><small
+                >{row.operationKey} · {row.occurrenceCount} occurrences</small
+              ></span
+            ><span data-label="Details"
+              >{row.message}<template lwc:if={row.httpStatusCode}
+                ><small>HTTP {row.httpStatusCode}</small></template
+              ></span
+            ><span data-label="Record"
+              ><template lwc:if={row.recordUrl}
+                ><a href={row.recordUrl}
+                  >{row.sourceObject}: {row.sourceRecordId}</a
+                ></template
+              ><template lwc:else>{row.sourceObject}</template></span
+            ><span data-label="Retry">{row.retryStatus} ({row.retryCount})</span
+            ><span data-label="Latest"
+              ><lightning-formatted-date-time
+                value={row.createdAt}
+              ></lightning-formatted-date-time></span
+            ><span data-label="Action"
+              ><lightning-button-icon
+                icon-name="utility:refresh"
+                alternative-text="Retry"
+                title={row.retryTitle}
+                data-id={row.id}
+                onclick={retry}
+                disabled={row.retryDisabled}
+              ></lightning-button-icon
+              ><template lwc:if={row.showRoute}
+                ><lightning-button-icon
+                  icon-name="utility:jump_to_right"
+                  alternative-text="Open recommended workspace"
+                  data-screen={row.routeScreen}
+                  data-focus={row.operationKey}
+                  onclick={route}
+                ></lightning-button-icon></template
+            ></span></div
+        ></template>
       </div>
-      <div class="pagination"><lightning-button label="Previous" onclick={previous} disabled={previousDisabled}></lightning-button><span>{pageLabel}</span><lightning-button label="Next" onclick={next} disabled={nextDisabled}></lightning-button></div>
+      <div class="pagination">
+        <lightning-button
+          label="Previous"
+          onclick={previous}
+          disabled={previousDisabled}
+        ></lightning-button
+        ><span>{pageLabel}</span
+        ><lightning-button
+          label="Next"
+          onclick={next}
+          disabled={nextDisabled}
+        ></lightning-button>
+      </div>
     </template>
-    <template lwc:else><template lwc:if={loading}></template><template lwc:else><div class="empty"><lightning-icon icon-name="utility:success" size="small"></lightning-icon><h2>No errors in this view</h2><p>There are no matching integration errors.</p></div></template></template>
+    <template lwc:else
+      ><template lwc:if={loading}></template
+      ><template lwc:else
+        ><div class="empty">
+          <lightning-icon
+            icon-name="utility:success"
+            size="small"
+          ></lightning-icon>
+          <h2>No errors in this view</h2>
+          <p>There are no matching integration errors.</p>
+        </div></template
+      ></template
+    >
   </section>
 </template>

@@ -1,1 +1,167 @@
-.heading{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem}.heading h1{font-size:1.55rem;font-weight:700}.heading p{color:#64748b;margin-top:.25rem}.state{min-height:180px;position:relative}.alert{background:#fef1ee;color:#8e1f0b;padding:.8rem;border-radius:.4rem}.editor,.jobs,.runs{background:#fff;border:1px solid #d8e0ea;border-radius:.6rem;padding:1rem;margin-bottom:1rem}.editor h2,.runs h2{font-weight:700;margin-bottom:.8rem}.form-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:.8rem}.actions,.job-actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem}.filters{display:grid;grid-template-columns:1fr 180px;gap:.8rem;margin-bottom:1rem}.job-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.8rem}.job{border:1px solid #d8e0ea;border-radius:.5rem;padding:.8rem}.job-main{display:block;width:100%;border:0;background:transparent;text-align:left;cursor:pointer}.job h2{font-weight:700;margin:.45rem 0 .2rem}.job p{color:#64748b}.status{font-size:.7rem;background:#e8f3ff;color:#0b5cab;border-radius:1rem;padding:.2rem .55rem}.job dl{display:grid;grid-template-columns:repeat(3,1fr);gap:.4rem;margin-top:.8rem}.job dt{font-size:.68rem;color:#64748b}.job dd{font-size:.8rem}.run{display:grid;grid-template-columns:100px 1fr 120px 100px;gap:.5rem;padding:.55rem;border-top:1px solid #e5eaf0}.empty{text-align:center;padding:2.5rem}.empty h2{font-weight:700;margin:.6rem 0 .2rem}@media(max-width:900px){.form-grid{grid-template-columns:repeat(2,1fr)}.job-grid{grid-template-columns:1fr}}@media(max-width:550px){.form-grid,.filters{grid-template-columns:1fr}.run{grid-template-columns:1fr}}
+.heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+.heading h1 {
+  font-size: 1.55rem;
+  font-weight: 700;
+}
+.heading p {
+  color: #64748b;
+  margin-top: 0.25rem;
+}
+.health-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.6rem;
+  background: #eef5ff;
+  border: 1px solid #b8d4f5;
+  border-radius: 0.6rem;
+  padding: 0.8rem;
+  margin-bottom: 1rem;
+}
+.health-strip div {
+  display: flex;
+  flex-direction: column;
+}
+.health-strip span,
+.job dt {
+  font-size: 0.68rem;
+  color: #526173;
+}
+.state {
+  min-height: 180px;
+  position: relative;
+}
+.alert {
+  background: #fef1ee;
+  color: #8e1f0b;
+  padding: 0.8rem;
+  border-radius: 0.4rem;
+}
+.editor,
+.jobs,
+.runs {
+  background: #fff;
+  border: 1px solid #d8e0ea;
+  border-radius: 0.6rem;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+.editor h2,
+.runs h2 {
+  font-weight: 700;
+  margin-bottom: 0.8rem;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.8rem;
+}
+.preview {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  background: #f7f9fb;
+  padding: 0.65rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+.actions,
+.job-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+.filters {
+  display: grid;
+  grid-template-columns: 1fr 180px;
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+.job-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+.job {
+  border: 1px solid #d8e0ea;
+  border-radius: 0.5rem;
+  padding: 0.8rem;
+}
+.job-main {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.job h2 {
+  font-weight: 700;
+  margin: 0.45rem 0 0.2rem;
+}
+.job p {
+  color: #64748b;
+}
+.status {
+  font-size: 0.7rem;
+  background: #e8f3ff;
+  color: #0b5cab;
+  border-radius: 1rem;
+  padding: 0.2rem 0.55rem;
+}
+.job dl {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.4rem;
+  margin-top: 0.8rem;
+}
+.job dd {
+  font-size: 0.8rem;
+}
+.run {
+  display: grid;
+  grid-template-columns: 90px 145px repeat(5, 95px) minmax(140px, 1fr);
+  gap: 0.5rem;
+  padding: 0.55rem;
+  border-top: 1px solid #e5eaf0;
+  align-items: center;
+}
+.empty {
+  text-align: center;
+  padding: 2.5rem;
+}
+.empty h2 {
+  font-weight: 700;
+  margin: 0.6rem 0 0.2rem;
+}
+@media (max-width: 1024px) {
+  .health-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .run {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 900px) {
+  .form-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .job-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 550px) {
+  .form-grid,
+  .filters,
+  .health-strip {
+    grid-template-columns: 1fr;
+  }
+  .run {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,15 +1,212 @@
 <template>
   <section aria-labelledby="scheduler-title">
-    <div class="heading"><div><h1 id="scheduler-title">Scheduler</h1><p>Independent connector schedules share the Quickbridge heartbeat and leases.</p></div><lightning-button variant="brand" label="New Schedule" icon-name="utility:add" onclick={newSchedule}></lightning-button></div>
-    <template lwc:if={loading}><div class="state"><lightning-spinner alternative-text="Loading schedules"></lightning-spinner></div></template>
-    <template lwc:if={errorMessage}><div class="alert" role="alert">{errorMessage}</div></template>
+    <div class="heading">
+      <div>
+        <h1 id="scheduler-title">Scheduler</h1>
+        <p>
+          Independent connector schedules share the Quickbridge heartbeat and
+          leases.
+        </p>
+      </div>
+      <lightning-button
+        variant="brand"
+        label="New Schedule"
+        icon-name="utility:add"
+        onclick={newSchedule}
+      ></lightning-button>
+    </div>
+    <template lwc:if={loading}
+      ><div class="state">
+        <lightning-spinner
+          alternative-text="Loading schedules"
+        ></lightning-spinner></div
+    ></template>
+    <template lwc:if={errorMessage}
+      ><div class="alert" role="alert">{errorMessage}</div></template
+    >
+    <div class="health-strip" aria-label="Scheduler health">
+      <div>
+        <span>Heartbeat</span><strong>{workspace.heartbeatStatus}</strong>
+      </div>
+      <div>
+        <span>Next heartbeat</span
+        ><strong
+          ><lightning-formatted-date-time
+            value={workspace.nextHeartbeat}
+          ></lightning-formatted-date-time
+        ></strong>
+      </div>
+      <div><span>Backlog</span><strong>{workspace.backlogCount}</strong></div>
+      <div>
+        <span>Active leases</span><strong>{workspace.activeLeaseCount}</strong>
+      </div>
+    </div>
     <template lwc:if={editing}>
-      <article class="editor"><h2>{editorTitle}</h2><div class="form-grid"><lightning-combobox label="Salesforce Object" value={draft.sourceObject} options={workspace.objects} data-field="sourceObject" onchange={change} required></lightning-combobox><lightning-combobox label="Direction" value={draft.direction} options={workspace.directions} data-field="direction" onchange={change} required></lightning-combobox><lightning-input type="number" min="1" max="10000" label="Every" value={draft.frequencyValue} data-field="frequencyValue" onchange={change} required></lightning-input><lightning-combobox label="Frequency" value={draft.frequencyType} options={workspace.frequencies} data-field="frequencyType" onchange={change} required></lightning-combobox></div><div class="actions"><lightning-button label="Cancel" onclick={cancel}></lightning-button><lightning-button variant="brand" label="Save" onclick={save} disabled={saveDisabled}></lightning-button></div></article>
+      <article class="editor">
+        <h2>{editorTitle}</h2>
+        <div class="form-grid">
+          <lightning-combobox
+            label="Salesforce Object"
+            value={draft.sourceObject}
+            options={workspace.objects}
+            data-field="sourceObject"
+            onchange={change}
+            required
+          ></lightning-combobox
+          ><lightning-combobox
+            label="Direction"
+            value={draft.direction}
+            options={workspace.directions}
+            data-field="direction"
+            onchange={change}
+            required
+          ></lightning-combobox
+          ><lightning-input
+            type="number"
+            min="1"
+            max="10000"
+            label="Every"
+            value={draft.frequencyValue}
+            data-field="frequencyValue"
+            onchange={change}
+            required
+          ></lightning-input
+          ><lightning-combobox
+            label="Frequency"
+            value={draft.frequencyType}
+            options={workspace.frequencies}
+            data-field="frequencyType"
+            onchange={change}
+            required
+          ></lightning-combobox>
+        </div>
+        <template lwc:if={hasPreview}
+          ><div class="preview">
+            <strong>Next three runs</strong
+            ><template for:each={previewRuns} for:item="run"
+              ><lightning-formatted-date-time
+                key={run}
+                value={run}
+              ></lightning-formatted-date-time
+            ></template></div
+        ></template>
+        <div class="actions">
+          <lightning-button label="Cancel" onclick={cancel}></lightning-button
+          ><lightning-button
+            variant="brand"
+            label="Save"
+            onclick={save}
+            disabled={saveDisabled}
+          ></lightning-button>
+        </div>
+      </article>
     </template>
-    <article class="jobs"><div class="filters"><lightning-input type="search" variant="label-hidden" label="Search jobs" placeholder="Search scheduled jobs" onchange={handleSearch}></lightning-input><lightning-combobox variant="label-hidden" label="Status" value={statusFilter} options={statusOptions} onchange={handleStatus}></lightning-combobox></div>
-      <template lwc:if={hasSchedules}><div class="job-grid"><template for:each={filteredSchedules} for:item="job"><article class="job" key={job.id}><button class="job-main" data-id={job.id} onclick={select}><span class="status">{job.status}</span><h2>{job.name}</h2><p>{job.sourceObject} · {job.direction}</p><dl><div><dt>Frequency</dt><dd>Every {job.frequencyValue} {job.frequencyType}</dd></div><div><dt>Next Run</dt><dd><lightning-formatted-date-time value={job.nextRun}></lightning-formatted-date-time></dd></div><div><dt>Last Run</dt><dd><lightning-formatted-date-time value={job.lastRun}></lightning-formatted-date-time></dd></div></dl></button><div class="job-actions"><lightning-button label="Edit" data-id={job.id} onclick={edit}></lightning-button><lightning-button label={job.pauseLabel} data-id={job.id} onclick={toggle}></lightning-button><lightning-button-icon icon-name="utility:delete" alternative-text="Delete" data-id={job.id} onclick={remove}></lightning-button-icon></div></article></template></div></template>
-      <template lwc:else><div class="empty"><lightning-icon icon-name="utility:date_time" size="small"></lightning-icon><h2>No scheduled jobs</h2><p>Create a schedule to add work to the shared heartbeat.</p></div></template>
+    <article class="jobs">
+      <div class="filters">
+        <lightning-input
+          type="search"
+          variant="label-hidden"
+          label="Search jobs"
+          placeholder="Search scheduled jobs"
+          onchange={handleSearch}
+        ></lightning-input
+        ><lightning-combobox
+          variant="label-hidden"
+          label="Status"
+          value={statusFilter}
+          options={statusOptions}
+          onchange={handleStatus}
+        ></lightning-combobox>
+      </div>
+      <template lwc:if={hasSchedules}
+        ><div class="job-grid">
+          <template for:each={filteredSchedules} for:item="job"
+            ><article class="job" key={job.id}>
+              <button class="job-main" data-id={job.id} onclick={select}>
+                <span class="status">{job.status}</span>
+                <h2>{job.name}</h2>
+                <p>{job.sourceObject} · {job.direction}</p>
+                <dl>
+                  <div>
+                    <dt>Frequency</dt>
+                    <dd>Every {job.frequencyValue} {job.frequencyType}</dd>
+                  </div>
+                  <div>
+                    <dt>Next Run</dt>
+                    <dd>
+                      <lightning-formatted-date-time
+                        value={job.nextRun}
+                      ></lightning-formatted-date-time>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Execution</dt>
+                    <dd>{job.executionState}</dd>
+                  </div>
+                  <div>
+                    <dt>Last Run</dt>
+                    <dd>
+                      <lightning-formatted-date-time
+                        value={job.lastRun}
+                      ></lightning-formatted-date-time>
+                    </dd>
+                  </div>
+                </dl>
+              </button>
+              <div class="job-actions">
+                <lightning-button
+                  label="Edit"
+                  data-id={job.id}
+                  onclick={edit}
+                ></lightning-button
+                ><lightning-button
+                  label={job.pauseLabel}
+                  data-id={job.id}
+                  onclick={toggle}
+                ></lightning-button
+                ><lightning-button-icon
+                  icon-name="utility:delete"
+                  alternative-text="Delete"
+                  data-id={job.id}
+                  onclick={remove}
+                ></lightning-button-icon>
+              </div></article
+          ></template></div
+      ></template>
+      <template lwc:else
+        ><div class="empty">
+          <lightning-icon
+            icon-name="utility:date_time"
+            size="small"
+          ></lightning-icon>
+          <h2>No scheduled jobs</h2>
+          <p>Create a schedule to add work to the shared heartbeat.</p>
+        </div></template
+      >
     </article>
-    <template lwc:if={selectedSchedule}><article class="runs"><h2>Recent Runs — {selectedSchedule.name}</h2><template lwc:if={hasRecentRuns}><template for:each={recentRuns} for:item="run"><div class="run" key={run.id}><span>{run.status}</span><lightning-formatted-date-time value={run.runAt}></lightning-formatted-date-time><span>Processed {run.processed}</span><span>Failed {run.failed}</span></div></template></template><template lwc:else><p>No recent work-item runs were found.</p></template></article></template>
+    <template lwc:if={selectedSchedule}
+      ><article class="runs">
+        <h2>Recent Runs — {selectedSchedule.name}</h2>
+        <template lwc:if={hasRecentRuns}
+          ><template for:each={recentRuns} for:item="run"
+            ><div class="run" key={run.id}>
+              <span>{run.status}</span
+              ><lightning-formatted-date-time
+                value={run.runAt}
+              ></lightning-formatted-date-time
+              ><span>Processed {run.processed}</span
+              ><span>Succeeded {run.succeeded}</span
+              ><span>Failed {run.failed}</span><span>Skipped {run.skipped}</span
+              ><span>{run.durationMs} ms</span><span>{run.message}</span>
+            </div></template
+          ></template
+        ><template lwc:else
+          ><p>
+            No observable run history has been recorded yet. Existing last-run
+            timestamps remain on schedule cards.
+          </p></template
+        >
+      </article></template
+    >
   </section>
 </template>

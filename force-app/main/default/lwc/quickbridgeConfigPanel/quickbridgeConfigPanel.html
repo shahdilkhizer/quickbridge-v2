@@ -4,84 +4,825 @@
       <section class="login-card" aria-labelledby="login-title">
         <img src={quickBridgeLogo} alt="Quickbridge" class="login-logo" />
         <h1 id="login-title">Quickbridge Administrator</h1>
-        <p>Sign in to manage integrations, mappings, schedules, reporting, and errors.</p>
-        <lightning-input label="User ID" value={userId} onchange={handleUserId} autocomplete="username" required></lightning-input>
-        <lightning-input label="4-digit PIN" type="password" value={pin} onchange={handlePin} maxlength="4" minlength="4" pattern="[0-9]{4}" autocomplete="current-password" required></lightning-input>
-        <template lwc:if={loginMessage}><div class="login-message" role="status">{loginMessage}</div></template>
-        <lightning-button variant="brand" label="Login" onclick={login} disabled={loginDisabled} stretch></lightning-button>
-        <button class="link-button" onclick={requestPinRecovery}>Forgot PIN?</button>
-        <template lwc:if={loginLoading}><lightning-spinner alternative-text="Signing in" size="small"></lightning-spinner></template>
+        <p>
+          Sign in to manage integrations, mappings, schedules, reporting, and
+          errors.
+        </p>
+        <lightning-input
+          label="User ID"
+          value={userId}
+          onchange={handleUserId}
+          autocomplete="username"
+          required
+        ></lightning-input>
+        <lightning-input
+          label="4-digit PIN"
+          type="password"
+          value={pin}
+          onchange={handlePin}
+          maxlength="4"
+          minlength="4"
+          pattern="[0-9]{4}"
+          autocomplete="current-password"
+          required
+        ></lightning-input>
+        <template lwc:if={loginMessage}
+          ><div class="login-message" role="status">
+            {loginMessage}
+          </div></template
+        >
+        <lightning-button
+          variant="brand"
+          label="Login"
+          onclick={login}
+          disabled={loginDisabled}
+          stretch
+        ></lightning-button>
+        <button class="link-button" onclick={requestPinRecovery}>
+          Forgot PIN?
+        </button>
+        <template lwc:if={loginLoading}
+          ><lightning-spinner
+            alternative-text="Signing in"
+            size="small"
+          ></lightning-spinner
+        ></template>
       </section>
     </div>
   </template>
 
   <template lwc:else>
-    <c-quickbridge-control-plane-shell current-screen={currentScreen} connector-label={selectedConnectorLabel} connector-status={selectedConnectorStatus} connector-health={selectedConnectorHealth} connector-last-run={selectedConnectorLastRun} connector-next-run={selectedConnectorNextRun} connector-schedule-state={selectedConnectorScheduleState} show-scheduler={showSchedulerNavigation} onnavigate={navigate} onback={backToIntegrations} onlogout={logout}>
-      <template lwc:if={loading}><div class="page-loading"><lightning-spinner alternative-text="Loading Quickbridge"></lightning-spinner></div></template>
-      <template lwc:if={hasExpiryAlert}><div class={expiryAlertClass} role="alert"><lightning-icon icon-name="utility:warning" size="x-small"></lightning-icon><div><strong>{expiryAlert.title}</strong><span>{expiryAlert.message}</span></div></div></template>
+    <c-quickbridge-control-plane-shell
+      current-screen={currentScreen}
+      connector-label={selectedConnectorLabel}
+      connector-status={selectedConnectorStatus}
+      connector-health={selectedConnectorHealth}
+      connector-last-run={selectedConnectorLastRun}
+      connector-next-run={selectedConnectorNextRun}
+      connector-schedule-state={selectedConnectorScheduleState}
+      show-scheduler={showSchedulerNavigation}
+      show-mapping={showMappingNavigation}
+      show-settings={showSettingsNavigation}
+      show-errors={showErrorsNavigation}
+      onnavigate={navigate}
+      onback={backToIntegrations}
+      onlogout={logout}
+    >
+      <template lwc:if={loading}
+        ><div class="page-loading">
+          <lightning-spinner
+            alternative-text="Loading Quickbridge"
+          ></lightning-spinner></div
+      ></template>
+      <template lwc:if={hasExpiryAlert}
+        ><div class={expiryAlertClass} role="alert">
+          <lightning-icon
+            icon-name="utility:warning"
+            size="x-small"
+          ></lightning-icon>
+          <div>
+            <strong>{expiryAlert.title}</strong
+            ><span>{expiryAlert.message}</span>
+          </div>
+        </div></template
+      >
 
       <template lwc:if={isIntegrations}>
         <section class="screen" aria-labelledby="integrations-title">
-          <div class="screen-heading"><div><h1 id="integrations-title">Integrations</h1><p>Manage Quickbridge products and target-org readiness.</p></div><div class="heading-actions"><lightning-button label="Renewal Request" onclick={openRenewal}></lightning-button><lightning-button variant="brand" label="Check Licenses" onclick={refreshEntitlements}></lightning-button></div></div>
-          <div class="section-heading"><div><h2>Subscribed Products</h2><p>Products with active connectors in this Salesforce org.</p></div></div>
-          <template lwc:if={hasSubscribed}><div class="product-grid"><template for:each={subscribedConnectors} for:item="connector"><article class={connector.tileClass} key={connector.key}><button data-key={connector.key} onclick={openConnector}><span class="tile-badge">{connector.statusLabel}</span><span class="logo-frame"><img src={connector.logoUrl} alt={connector.label} /></span><strong>{connector.label}</strong><span>{connector.description}</span><em class={connector.readinessClass}>{connector.readinessMessage}</em></button><lightning-button label="Settings" data-key={connector.key} onclick={setupConnector}></lightning-button></article></template></div></template>
-          <template lwc:else><div class="empty compact"><h2>No active product connectors</h2><p>Activate a connector in Settings to show it here.</p></div></template>
-          <div class="section-heading available-heading"><div><h2>Available Products</h2><p>Other metadata-defined Quickbridge applications.</p></div><lightning-button label={availableToggleLabel} onclick={toggleAvailableProducts}></lightning-button></div>
-          <template lwc:if={hasAvailable}><div class="product-grid"><template for:each={availableConnectors} for:item="connector"><article class={connector.tileClass} key={connector.key}><button data-key={connector.key} onclick={setupConnector}><span class="logo-frame"><img src={connector.logoUrl} alt={connector.label} /></span><strong>{connector.label}</strong><span>{connector.description}</span><em>Setup Now</em></button></article></template></div></template>
+          <div class="screen-heading">
+            <div>
+              <h1 id="integrations-title">Integrations</h1>
+              <p>Manage Quickbridge products and target-org readiness.</p>
+            </div>
+            <div class="heading-actions">
+              <lightning-button
+                label="Renewal Request"
+                onclick={openRenewal}
+              ></lightning-button
+              ><lightning-button
+                variant="brand"
+                label="Check Licenses"
+                onclick={refreshEntitlements}
+              ></lightning-button>
+            </div>
+          </div>
+          <div class="section-heading">
+            <div>
+              <h2>Subscribed Products</h2>
+              <p>Products with active connectors in this Salesforce org.</p>
+            </div>
+          </div>
+          <template lwc:if={hasSubscribed}
+            ><div class="product-grid">
+              <template for:each={subscribedConnectors} for:item="connector"
+                ><article class={connector.tileClass} key={connector.key}>
+                  <button data-key={connector.key} onclick={openConnector}>
+                    <span class="tile-badge">{connector.statusLabel}</span
+                    ><span class="logo-frame"
+                      ><img
+                        src={connector.logoUrl}
+                        alt={connector.label} /></span
+                    ><strong>{connector.label}</strong
+                    ><span>{connector.description}</span
+                    ><em class={connector.readinessClass}
+                      >{connector.primaryBlocker}</em
+                    >
+                  </button>
+                  <div class="readiness-progress">
+                    <span
+                      >{connector.readyCheckCount} of
+                      {connector.applicableCheckCount} checks ready</span
+                    ><lightning-progress-bar
+                      value={connector.readinessProgress}
+                      size="small"
+                    ></lightning-progress-bar>
+                  </div>
+                  <div class="tile-actions">
+                    <lightning-button
+                      label="Review readiness"
+                      data-key={connector.key}
+                      onclick={toggleReadiness}
+                    ></lightning-button
+                    ><lightning-button
+                      label="Settings"
+                      data-key={connector.key}
+                      onclick={setupConnector}
+                    ></lightning-button>
+                  </div>
+                  <template lwc:if={connector.showReadiness}
+                    ><div class="readiness-list">
+                      <template
+                        for:each={connector.readinessChecks}
+                        for:item="check"
+                        ><button
+                          class={check.cssClass}
+                          key={check.key}
+                          data-connector={connector.key}
+                          data-screen={check.targetScreen}
+                          data-focus={check.focusKey}
+                          onclick={openReadinessCheck}
+                        >
+                          <span
+                            ><strong>{check.label}</strong
+                            ><em>{check.stateLabel}</em></span
+                          ><small>{check.message}</small
+                          ><template lwc:if={check.verifiedAt}
+                            ><lightning-formatted-date-time
+                              value={check.verifiedAt}
+                              year="numeric"
+                              month="short"
+                              day="2-digit"
+                              hour="2-digit"
+                              minute="2-digit"
+                            ></lightning-formatted-date-time
+                          ></template></button
+                      ></template></div
+                  ></template></article
+              ></template></div
+          ></template>
+          <template lwc:else
+            ><div class="empty compact">
+              <h2>No active product connectors</h2>
+              <p>Activate a connector in Settings to show it here.</p>
+            </div></template
+          >
+          <div class="section-heading available-heading">
+            <div>
+              <h2>Available Products</h2>
+              <p>Other metadata-defined Quickbridge applications.</p>
+            </div>
+            <lightning-button
+              label={availableToggleLabel}
+              onclick={toggleAvailableProducts}
+            ></lightning-button>
+          </div>
+          <template lwc:if={hasAvailable}
+            ><div class="product-grid">
+              <template for:each={availableConnectors} for:item="connector"
+                ><article class={connector.tileClass} key={connector.key}>
+                  <button data-key={connector.key} onclick={setupConnector}>
+                    <span class="logo-frame"
+                      ><img
+                        src={connector.logoUrl}
+                        alt={connector.label} /></span
+                    ><strong>{connector.label}</strong
+                    ><span>{connector.description}</span><em>Setup Now</em>
+                  </button>
+                </article></template
+              >
+            </div></template
+          >
         </section>
       </template>
 
-      <template lwc:if={isReporting}><c-integration-reporting-dashboard session-token={sessionToken} connector-key={selectedConnectorKey}></c-integration-reporting-dashboard></template>
+      <template lwc:if={isReporting}
+        ><c-integration-reporting-dashboard
+          session-token={sessionToken}
+          connector-key={selectedConnectorKey}
+        ></c-integration-reporting-dashboard
+      ></template>
 
       <template lwc:if={needsConnector}>
-        <div class="empty no-gateway"><lightning-icon icon-name="utility:info" size="small"></lightning-icon><h1>No Gateway Selected</h1><p>Select an integration before opening this workspace.</p><lightning-button variant="brand" label="Go to Integrations" onclick={goToIntegrations}></lightning-button></div>
+        <div class="empty no-gateway">
+          <lightning-icon
+            icon-name="utility:info"
+            size="small"
+          ></lightning-icon>
+          <h1>No Gateway Selected</h1>
+          <p>Select an integration before opening this workspace.</p>
+          <lightning-button
+            variant="brand"
+            label="Go to Integrations"
+            onclick={goToIntegrations}
+          ></lightning-button>
+        </div>
       </template>
 
       <template lwc:if={isSettings}>
         <template lwc:if={selectedConnector}>
-          <section class="screen" aria-labelledby="settings-title"><div class="screen-heading"><div><h1 id="settings-title">{selectedConnector.label} Settings</h1><p>Configure non-secret values and validate the External Credential connection.</p></div><span class={selectedConnector.readinessClass}>{selectedConnector.statusLabel}</span></div>
-            <div class="settings-grid"><article class="panel profile"><span class="logo-frame large"><img src={selectedConnector.logoUrl} alt={selectedConnector.label} /></span><h2>{selectedConnector.label}</h2><dl><div><dt>Operational State</dt><dd>{selectedConnector.statusLabel}</dd></div><div><dt>Health</dt><dd>{selectedConnector.health}</dd></div><div><dt>Entitlement</dt><dd>{selectedConnector.entitlementStatus}</dd></div><div><dt>Named Credential</dt><dd>{connectorConfiguration.namedCredential}</dd></div></dl></article>
-              <article class="panel config-panel"><div class="panel-heading"><div><h2>Configuration</h2><p>{selectedConnector.readinessMessage}</p></div><template lwc:if={configEditing}><lightning-button label="Cancel" onclick={cancelConfiguration}></lightning-button></template><template lwc:else><lightning-button label="Edit Settings" onclick={editConfiguration} disabled={configEditDisabled}></lightning-button></template></div>
-                <template lwc:if={configLoading}><div class="inline-loading"><lightning-spinner alternative-text="Loading configuration" size="small"></lightning-spinner></div></template>
-                <template lwc:if={configError}><div class="alert" role="alert">{configError}</div></template>
-                <template lwc:if={hasConfigFields}><div class="config-form"><template for:each={configFields} for:item="field"><div key={field.key}><template lwc:if={field.isBoolean}><lightning-input type="checkbox" label={field.label} checked={field.checked} required={field.required} disabled={field.disabled} data-key={field.key} onchange={handleConfigChange}></lightning-input></template><template lwc:else><lightning-input type={field.inputType} label={field.label} value={field.value} required={field.required} disabled={field.disabled} data-key={field.key} onchange={handleConfigChange}></lightning-input></template></div></template></div></template>
-                <div class="settings-actions"><lightning-button label="Delete Configuration" onclick={resetConfiguration} disabled={configEditDisabled}></lightning-button><lightning-button label="Validate Connection" onclick={probeConnection}></lightning-button><lightning-button label={operationalStateLabel} onclick={toggleOperationalState}></lightning-button><lightning-button variant="brand" label="Run Now" onclick={runNow} disabled={runDisabled}></lightning-button><template lwc:if={configEditing}><lightning-button variant="brand" label="Save Configuration" onclick={saveConfiguration} disabled={configSaveDisabled}></lightning-button></template></div>
-              </article></div>
+          <section class="screen" aria-labelledby="settings-title">
+            <div class="screen-heading">
+              <div>
+                <h1 id="settings-title">{selectedConnector.label} Settings</h1>
+                <p>
+                  Configure non-secret values and validate the External
+                  Credential connection.
+                </p>
+              </div>
+              <span class={selectedConnector.readinessClass}
+                >{selectedConnector.statusLabel}</span
+              >
+            </div>
+            <div class="settings-grid">
+              <article class="panel profile">
+                <span class="logo-frame large"
+                  ><img
+                    src={selectedConnector.logoUrl}
+                    alt={selectedConnector.label}
+                /></span>
+                <h2>{selectedConnector.label}</h2>
+                <dl>
+                  <div>
+                    <dt>Operational State</dt>
+                    <dd>{selectedConnector.statusLabel}</dd>
+                  </div>
+                  <div>
+                    <dt>Health</dt>
+                    <dd>{selectedConnector.health}</dd>
+                  </div>
+                  <div>
+                    <dt>Entitlement</dt>
+                    <dd>{selectedConnector.entitlementStatus}</dd>
+                  </div>
+                  <div>
+                    <dt>Named Credential</dt>
+                    <dd>{connectorConfiguration.namedCredential}</dd>
+                  </div>
+                </dl>
+              </article>
+              <article
+                class="panel config-panel"
+                data-focus-key="configuration"
+                tabindex="-1"
+              >
+                <div class="panel-heading">
+                  <div>
+                    <h2>Configuration</h2>
+                    <p>{selectedConnector.readinessMessage}</p>
+                  </div>
+                  <template lwc:if={configEditing}
+                    ><lightning-button
+                      label="Cancel"
+                      onclick={cancelConfiguration}
+                    ></lightning-button></template
+                  ><template lwc:else
+                    ><lightning-button
+                      label="Edit Settings"
+                      onclick={editConfiguration}
+                      disabled={configEditDisabled}
+                    ></lightning-button
+                  ></template>
+                </div>
+                <template lwc:if={configLoading}
+                  ><div class="inline-loading">
+                    <lightning-spinner
+                      alternative-text="Loading configuration"
+                      size="small"
+                    ></lightning-spinner></div
+                ></template>
+                <template lwc:if={configError}
+                  ><div class="alert" role="alert">{configError}</div></template
+                >
+                <template lwc:if={hasConfigFields}
+                  ><div class="config-form">
+                    <template for:each={configFields} for:item="field"
+                      ><div key={field.key}>
+                        <template lwc:if={field.isBoolean}
+                          ><lightning-input
+                            type="checkbox"
+                            label={field.label}
+                            checked={field.checked}
+                            required={field.required}
+                            disabled={field.disabled}
+                            data-key={field.key}
+                            onchange={handleConfigChange}
+                          ></lightning-input></template
+                        ><template lwc:else
+                          ><lightning-input
+                            type={field.inputType}
+                            label={field.label}
+                            value={field.value}
+                            required={field.required}
+                            disabled={field.disabled}
+                            data-key={field.key}
+                            onchange={handleConfigChange}
+                          ></lightning-input
+                        ></template></div
+                    ></template></div
+                ></template>
+                <div class="settings-actions">
+                  <lightning-button
+                    label="Delete Configuration"
+                    onclick={resetConfiguration}
+                    disabled={configEditDisabled}
+                  ></lightning-button
+                  ><lightning-button
+                    label="Validate Connection"
+                    onclick={probeConnection}
+                  ></lightning-button
+                  ><lightning-button
+                    label={operationalStateLabel}
+                    onclick={toggleOperationalState}
+                  ></lightning-button
+                  ><lightning-button
+                    variant="brand"
+                    label="Run Now"
+                    onclick={runNow}
+                    disabled={runDisabled}
+                  ></lightning-button
+                  ><template lwc:if={configEditing}
+                    ><lightning-button
+                      variant="brand"
+                      label="Save Configuration"
+                      onclick={saveConfiguration}
+                      disabled={configSaveDisabled}
+                    ></lightning-button
+                  ></template>
+                </div>
+              </article>
+            </div>
           </section>
         </template>
       </template>
 
       <template lwc:if={isMapping}>
         <template lwc:if={selectedConnector}>
-          <section class="screen" aria-labelledby="mapping-title"><div class="screen-heading"><div><h1 id="mapping-title">{selectedConnector.label} Field Mapping</h1><p>{mappingPresentationLabel}</p></div></div>
+          <section class="screen" aria-labelledby="mapping-title">
+            <div class="screen-heading">
+              <div>
+                <h1 id="mapping-title">
+                  {selectedConnector.label} Field Mapping
+                </h1>
+                <p>{mappingPresentationLabel}</p>
+              </div>
+            </div>
             <template lwc:if={isCarrierMapping}>
-              <c-carrier-operation-mapping connector-key={selectedConnectorKey}></c-carrier-operation-mapping>
+              <c-carrier-operation-mapping
+                connector-key={selectedConnectorKey}
+              ></c-carrier-operation-mapping>
             </template>
             <template lwc:elseif={isPaymentMapping}>
-              <c-invoice-mapping-tool gateway={selectedConnectorKey} session-token={sessionToken}></c-invoice-mapping-tool>
+              <c-invoice-mapping-tool
+                gateway={selectedConnectorKey}
+                session-token={sessionToken}
+                onmappingdirtychange={handleChildMappingDirty}
+              ></c-invoice-mapping-tool>
             </template>
             <template lwc:else>
-            <template lwc:if={mappingLoading}><div class="page-loading"><lightning-spinner alternative-text="Loading mappings"></lightning-spinner></div></template>
-            <template lwc:if={mappingError}><div class="alert" role="alert">{mappingError}</div></template>
-            <template lwc:if={hasMappingWorkspace}><div class="mapping-layout"><article class="panel mapping-editor"><lightning-combobox label="Operation" value={selectedMappingOperationKey} options={mappingOperationOptions} onchange={changeMappingOperation}></lightning-combobox>            <template lwc:if={hasMappingOperations}><div class="mapping-meta"><span><strong>Salesforce Object</strong>{selectedMappingOperation.salesforceObject}</span><span><strong>Provider Object</strong>{selectedMappingOperation.externalObject}</span><span><strong>Direction</strong>{selectedMappingOperation.direction}</span></div><template lwc:if={showRecordSaveSetting}>
-                <div class="slds-m-vertical_medium">
-                  <lightning-input type="checkbox" label="Run sync on record save" checked={selectedMappingOperation.runOnRecordSave} disabled={recordSaveDisabled} onchange={handleRecordSaveChange} field-level-help="Automatically queue synchronization when records are created or mapped fields change. Related line-item changes follow this setting. Already queued work may finish."></lightning-input>
-                  <template lwc:if={recordSaveUnavailable}><p class="slds-text-color_weak">Requires an outbound operation</p></template>
-                </div>
-              </template>
-              <template lwc:if={mappingPending}><div role="status" class="slds-m-vertical_small">Mapping deployment pending. The saved setting remains in effect until deployment succeeds. <lightning-button label="Check deployment status" onclick={checkMappingDeployment} disabled={mappingSaving}></lightning-button></div></template>
-              <div class="mapping-toolbar"><h2>{headerSectionLabel}</h2><lightning-button label="Add Header Mapping" icon-name="utility:add" disabled={mappingResetDisabled} onclick={addHeaderMapping}></lightning-button></div><div class="mapping-table"><div class="mapping-row header"><span>Salesforce Field</span><span>Provider Field Path</span><span>Source</span><span>Active</span><span></span></div><template for:each={headerMappingRows} for:item="row"><div class="mapping-row" key={row.key}><lightning-combobox variant="label-hidden" label="Salesforce field" value={row.salesforceField} options={mappingFieldOptions} data-key={row.key} data-field="salesforceField" disabled={mappingResetDisabled} onchange={changeMappingByKey} dropdown-alignment="auto" required></lightning-combobox><lightning-input variant="label-hidden" label="Provider field path" value={row.externalPath} data-key={row.key} data-field="externalPath" onchange={changeMappingByKey} required></lightning-input><span class="source-pill">{row.source}</span><lightning-input type="checkbox" variant="label-hidden" label="Active" checked={row.active} data-key={row.key} data-field="active" onchange={changeMappingByKey}></lightning-input><lightning-button-icon icon-name="utility:delete" alternative-text="Delete mapping" data-key={row.key} disabled={mappingResetDisabled} onclick={removeMappingByKey}></lightning-button-icon></div></template></div><template lwc:if={hasLineItems}><div class="mapping-toolbar line-toolbar"><h2>{lineSectionLabel}</h2><lightning-button label="Add Line Mapping" icon-name="utility:add" disabled={mappingResetDisabled} onclick={addLineMapping}></lightning-button></div><div class="mapping-table"><div class="mapping-row header"><span>Child Field ({lineObjectLabel})</span><span>Provider Line Path</span><span>Source</span><span>Active</span><span></span></div><template for:each={lineMappingRows} for:item="row"><div class="mapping-row" key={row.key}><lightning-combobox variant="label-hidden" label="Child field" value={row.salesforceField} options={lineFieldOptions} data-key={row.key} data-field="salesforceField" onchange={changeMappingByKey} dropdown-alignment="auto" required></lightning-combobox><lightning-input variant="label-hidden" label="Provider line path" value={row.externalPath} data-key={row.key} data-field="externalPath" onchange={changeMappingByKey} required></lightning-input><span class="source-pill">{row.source}</span><lightning-input type="checkbox" variant="label-hidden" label="Active" checked={row.active} data-key={row.key} data-field="active" onchange={changeMappingByKey}></lightning-input><lightning-button-icon icon-name="utility:delete" alternative-text="Delete mapping" data-key={row.key} onclick={removeMappingByKey}></lightning-button-icon></div></template></div></template><div class="mapping-actions"><lightning-button label="Reset to Defaults" onclick={resetMappings} disabled={mappingResetDisabled}></lightning-button><lightning-button variant="brand" label="Save Mappings" onclick={saveMappingWorkspace} disabled={mappingSaveDisabled}></lightning-button></div></template><template lwc:else><div class="empty compact"><h2>No mapping operations</h2><p>This connector does not currently expose record field mappings.</p></div></template></article><c-quickbridge-mapping-assistant operation={assistantOperation} connector-label={selectedConnectorLabel} analysis={mappingAnalysis} loading={mappingAnalysisLoading} error-message={mappingAnalysisError} allow-apply={assistantCanApply} onreview={refreshMappingAnalysis} onapplysuggestions={applySuggestions}></c-quickbridge-mapping-assistant></div></template>
+              <template lwc:if={mappingLoading}
+                ><div class="page-loading">
+                  <lightning-spinner
+                    alternative-text="Loading mappings"
+                  ></lightning-spinner></div
+              ></template>
+              <template lwc:if={mappingError}
+                ><div class="alert" role="alert">{mappingError}</div></template
+              >
+              <template lwc:if={hasMappingWorkspace}
+                ><aside class="mapping-summary" aria-label="Mapping summary">
+                  <span
+                    ><strong
+                      >{mappingRequiredMapped}/{mappingRequiredTotal}</strong
+                    >
+                    required</span
+                  ><span><strong>{mappingBlockerCount}</strong> blockers</span
+                  ><span><strong>{mappingWarningCount}</strong> warnings</span
+                  ><span
+                    ><strong>{mappingPending}</strong> deployment pending</span
+                  ><span><strong>{mappingDirty}</strong> unsaved changes</span>
+                </aside>
+                <div class="mapping-layout">
+                  <article
+                    class="panel mapping-editor"
+                    data-focus-key={selectedMappingOperation.operationKey}
+                    tabindex="-1"
+                  >
+                    <lightning-combobox
+                      label="Operation"
+                      value={selectedMappingOperationKey}
+                      options={mappingOperationOptions}
+                      onchange={changeMappingOperation}
+                    ></lightning-combobox>
+                    <template lwc:if={hasMappingOperations}
+                      ><div class="mapping-meta">
+                        <span
+                          ><strong>Salesforce Object</strong
+                          >{selectedMappingOperation.salesforceObject}</span
+                        ><span
+                          ><strong>Provider Object</strong
+                          >{selectedMappingOperation.externalObject}</span
+                        ><span
+                          ><strong>Direction</strong
+                          >{selectedMappingOperation.direction}</span
+                        >
+                      </div>
+                      <template lwc:if={showRecordSaveSetting}>
+                        <div class="slds-m-vertical_medium">
+                          <lightning-input
+                            type="checkbox"
+                            label="Run sync on record save"
+                            checked={selectedMappingOperation.runOnRecordSave}
+                            disabled={recordSaveDisabled}
+                            onchange={handleRecordSaveChange}
+                            field-level-help="Automatically queue synchronization when records are created or mapped fields change. Related line-item changes follow this setting. Already queued work may finish."
+                          ></lightning-input>
+                          <template lwc:if={recordSaveUnavailable}
+                            ><p class="slds-text-color_weak">
+                              Requires an outbound operation
+                            </p></template
+                          >
+                        </div>
+                      </template>
+                      <template lwc:if={mappingPending}
+                        ><div role="status" class="slds-m-vertical_small">
+                          Mapping deployment pending. The saved setting remains
+                          in effect until deployment succeeds.
+                          <lightning-button
+                            label="Check deployment status"
+                            onclick={checkMappingDeployment}
+                            disabled={mappingSaving}
+                          ></lightning-button></div
+                      ></template>
+                      <div class="mapping-toolbar">
+                        <h2>{headerSectionLabel}</h2>
+                        <lightning-button
+                          label="Add Header Mapping"
+                          icon-name="utility:add"
+                          disabled={mappingResetDisabled}
+                          onclick={addHeaderMapping}
+                        ></lightning-button>
+                      </div>
+                      <div class="mapping-table">
+                        <div class="mapping-row header">
+                          <span>Salesforce Field</span
+                          ><span>Provider Field Path</span><span>Source</span
+                          ><span>Active</span><span></span>
+                        </div>
+                        <template for:each={headerMappingRows} for:item="row"
+                          ><div class="mapping-row" key={row.key}>
+                            <lightning-combobox
+                              variant="label-hidden"
+                              label="Salesforce field"
+                              value={row.salesforceField}
+                              options={mappingFieldOptions}
+                              data-key={row.key}
+                              data-field="salesforceField"
+                              disabled={mappingResetDisabled}
+                              onchange={changeMappingByKey}
+                              dropdown-alignment="auto"
+                              required
+                            ></lightning-combobox
+                            ><lightning-input
+                              variant="label-hidden"
+                              label="Provider field path"
+                              value={row.externalPath}
+                              data-key={row.key}
+                              data-field="externalPath"
+                              onchange={changeMappingByKey}
+                              required
+                            ></lightning-input
+                            ><span class="source-pill">{row.source}</span
+                            ><lightning-input
+                              type="checkbox"
+                              variant="label-hidden"
+                              label="Active"
+                              checked={row.active}
+                              data-key={row.key}
+                              data-field="active"
+                              onchange={changeMappingByKey}
+                            ></lightning-input
+                            ><lightning-button-icon
+                              icon-name="utility:delete"
+                              alternative-text="Delete mapping"
+                              data-key={row.key}
+                              disabled={mappingResetDisabled}
+                              onclick={removeMappingByKey}
+                            ></lightning-button-icon></div
+                        ></template>
+                      </div>
+                      <template lwc:if={hasLineItems}
+                        ><div class="mapping-toolbar line-toolbar">
+                          <h2>{lineSectionLabel}</h2>
+                          <lightning-button
+                            label="Add Line Mapping"
+                            icon-name="utility:add"
+                            disabled={mappingResetDisabled}
+                            onclick={addLineMapping}
+                          ></lightning-button>
+                        </div>
+                        <div class="mapping-table">
+                          <div class="mapping-row header">
+                            <span>Child Field ({lineObjectLabel})</span
+                            ><span>Provider Line Path</span><span>Source</span
+                            ><span>Active</span><span></span>
+                          </div>
+                          <template for:each={lineMappingRows} for:item="row"
+                            ><div class="mapping-row" key={row.key}>
+                              <lightning-combobox
+                                variant="label-hidden"
+                                label="Child field"
+                                value={row.salesforceField}
+                                options={lineFieldOptions}
+                                data-key={row.key}
+                                data-field="salesforceField"
+                                onchange={changeMappingByKey}
+                                dropdown-alignment="auto"
+                                required
+                              ></lightning-combobox
+                              ><lightning-input
+                                variant="label-hidden"
+                                label="Provider line path"
+                                value={row.externalPath}
+                                data-key={row.key}
+                                data-field="externalPath"
+                                onchange={changeMappingByKey}
+                                required
+                              ></lightning-input
+                              ><span class="source-pill">{row.source}</span
+                              ><lightning-input
+                                type="checkbox"
+                                variant="label-hidden"
+                                label="Active"
+                                checked={row.active}
+                                data-key={row.key}
+                                data-field="active"
+                                onchange={changeMappingByKey}
+                              ></lightning-input
+                              ><lightning-button-icon
+                                icon-name="utility:delete"
+                                alternative-text="Delete mapping"
+                                data-key={row.key}
+                                onclick={removeMappingByKey}
+                              ></lightning-button-icon></div
+                          ></template></div
+                      ></template>
+                      <div class="mapping-actions">
+                        <lightning-button
+                          label="Reset to Defaults"
+                          onclick={resetMappings}
+                          disabled={mappingResetDisabled}
+                        ></lightning-button
+                        ><lightning-button
+                          variant="brand"
+                          label="Save Mappings"
+                          onclick={saveMappingWorkspace}
+                          disabled={mappingSaveDisabled}
+                        ></lightning-button></div></template
+                    ><template lwc:else
+                      ><div class="empty compact">
+                        <h2>No mapping operations</h2>
+                        <p>
+                          This connector does not currently expose record field
+                          mappings.
+                        </p>
+                      </div></template
+                    >
+                  </article>
+                  <c-quickbridge-mapping-assistant
+                    operation={assistantOperation}
+                    connector-label={selectedConnectorLabel}
+                    analysis={mappingAnalysis}
+                    loading={mappingAnalysisLoading}
+                    error-message={mappingAnalysisError}
+                    allow-apply={assistantCanApply}
+                    onreview={refreshMappingAnalysis}
+                    onapplysuggestions={applySuggestions}
+                  ></c-quickbridge-mapping-assistant></div
+              ></template>
             </template>
           </section>
         </template>
       </template>
 
-      <template lwc:if={isErrors}><template lwc:if={selectedConnector}><c-error-log-table session-token={sessionToken} connector-key={selectedConnectorKey}></c-error-log-table></template></template>
-      <template lwc:if={isScheduler}><template lwc:if={selectedConnector}><c-quickbridge-scheduler session-token={sessionToken} connector-key={selectedConnectorKey}></c-quickbridge-scheduler></template></template>
+      <template lwc:if={isErrors}
+        ><template lwc:if={selectedConnector}
+          ><c-error-log-table
+            session-token={sessionToken}
+            connector-key={selectedConnectorKey}
+          ></c-error-log-table></template
+      ></template>
+      <template lwc:if={isScheduler}
+        ><template lwc:if={selectedConnector}
+          ><c-quickbridge-scheduler
+            session-token={sessionToken}
+            connector-key={selectedConnectorKey}
+          ></c-quickbridge-scheduler></template
+      ></template>
     </c-quickbridge-control-plane-shell>
   </template>
 
+  <template lwc:if={mappingSaveReviewOpen}>
+    <section
+      role="dialog"
+      tabindex="-1"
+      aria-modal="true"
+      aria-labelledby="generic-mapping-review-title"
+      class="slds-modal slds-fade-in-open"
+    >
+      <div class="slds-modal__container">
+        <header class="slds-modal__header">
+          <h2 id="generic-mapping-review-title" class="slds-modal__title">
+            Review mapping changes
+          </h2>
+        </header>
+        <div class="slds-modal__content slds-p-around_medium">
+          <p>
+            {mappingRequiredMapped} of {mappingRequiredTotal} required mappings
+            are complete.
+          </p>
+          <p>
+            {mappingBlockerCount} blockers and {mappingWarningCount} warnings
+            remain. Warnings do not block saving.
+          </p>
+          <template lwc:if={mappingBlockerCount}
+            ><div class="alert" role="alert">
+              Resolve required mappings, duplicates, or invalid references
+              before saving.
+            </div></template
+          >
+        </div>
+        <footer class="slds-modal__footer">
+          <lightning-button
+            label="Continue editing"
+            onclick={closeMappingSaveReview}
+          ></lightning-button
+          ><lightning-button
+            variant="brand"
+            label="Save changes"
+            onclick={confirmMappingSave}
+            disabled={mappingReviewSaveDisabled}
+          ></lightning-button>
+        </footer>
+      </div>
+    </section>
+    <div class="slds-backdrop slds-backdrop_open"></div>
+  </template>
+
+  <template lwc:if={runDrawerOpen}>
+    <section
+      class="run-drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="run-drawer-title"
+    >
+      <header>
+        <div>
+          <p class="mapping-eyebrow">Manual execution</p>
+          <h2 id="run-drawer-title">{selectedConnectorLabel} run</h2>
+        </div>
+        <lightning-button-icon
+          icon-name="utility:close"
+          alternative-text="Close run details"
+          onclick={closeRunDrawer}
+        ></lightning-button-icon>
+      </header>
+      <div class={runStatusClass}>
+        <span>Status</span><strong>{runStatus.status}</strong
+        ><template lwc:if={runPolling}
+          ><lightning-spinner
+            alternative-text="Refreshing run status"
+            size="small"
+          ></lightning-spinner
+        ></template>
+      </div>
+      <dl class="run-metrics">
+        <div>
+          <dt>Schedules</dt>
+          <dd>{runStatus.requestedCount}</dd>
+        </div>
+        <div>
+          <dt>Processed</dt>
+          <dd>{runStatus.processedCount}</dd>
+        </div>
+        <div>
+          <dt>Succeeded</dt>
+          <dd>{runStatus.successfulCount}</dd>
+        </div>
+        <div>
+          <dt>Failed</dt>
+          <dd>{runStatus.failedCount}</dd>
+        </div>
+        <div>
+          <dt>Skipped</dt>
+          <dd>{runStatus.skippedCount}</dd>
+        </div>
+        <div>
+          <dt>Duration</dt>
+          <dd>{runDurationLabel}</dd>
+        </div>
+      </dl>
+      <template lwc:if={runStatus.message}
+        ><div class="run-message">{runStatus.message}</div></template
+      >
+      <footer>
+        <lightning-button
+          label="Refresh"
+          onclick={refreshRunStatus}
+          disabled={runPolling}
+        ></lightning-button
+        ><template lwc:if={runStatus.failedCount}
+          ><lightning-button
+            variant="brand"
+            label="Open Error Log"
+            onclick={openRunErrors}
+          ></lightning-button
+        ></template>
+      </footer>
+    </section>
+    <div class="run-backdrop"></div>
+  </template>
+
   <template lwc:if={renewalOpen}>
-    <section role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="renewal-title" class="slds-modal slds-fade-in-open"><div class="slds-modal__container"><header class="slds-modal__header"><h2 id="renewal-title" class="slds-modal__title">Quickbridge Renewal Request</h2></header><div class="slds-modal__content slds-p-around_medium renewal-content"><h3>Renew Existing Subscriptions</h3><template for:each={renewalRenewals} for:item="item"><label class="renewal-row" key={item.key}><lightning-input type="checkbox" variant="label-hidden" label={item.label} checked={item.selected} data-key={item.key} data-group="renewal" onchange={changeRenewalChoice}></lightning-input><img src={item.logoUrl} alt="" /><span>{item.label}</span><em>{item.entitlementStatus}</em></label></template><h3>Request Additional Subscriptions</h3><template for:each={renewalAdditions} for:item="item"><label class="renewal-row" key={item.key}><lightning-input type="checkbox" variant="label-hidden" label={item.label} checked={item.selected} data-key={item.key} data-group="additional" onchange={changeRenewalChoice}></lightning-input><img src={item.logoUrl} alt="" /><span>{item.label}</span><em>Available</em></label></template></div><footer class="slds-modal__footer"><lightning-button label="Cancel" onclick={closeRenewal}></lightning-button><lightning-button variant="brand" label="Send Email" onclick={submitRenewal}></lightning-button></footer></div></section><div class="slds-backdrop slds-backdrop_open"></div>
+    <section
+      role="dialog"
+      tabindex="-1"
+      aria-modal="true"
+      aria-labelledby="renewal-title"
+      class="slds-modal slds-fade-in-open"
+    >
+      <div class="slds-modal__container">
+        <header class="slds-modal__header">
+          <h2 id="renewal-title" class="slds-modal__title">
+            Quickbridge Renewal Request
+          </h2>
+        </header>
+        <div class="slds-modal__content slds-p-around_medium renewal-content">
+          <h3>Renew Existing Subscriptions</h3>
+          <template for:each={renewalRenewals} for:item="item"
+            ><label class="renewal-row" key={item.key}
+              ><lightning-input
+                type="checkbox"
+                variant="label-hidden"
+                label={item.label}
+                checked={item.selected}
+                data-key={item.key}
+                data-group="renewal"
+                onchange={changeRenewalChoice}
+              ></lightning-input
+              ><img src={item.logoUrl} alt="" /><span>{item.label}</span
+              ><em>{item.entitlementStatus}</em></label
+            ></template
+          >
+          <h3>Request Additional Subscriptions</h3>
+          <template for:each={renewalAdditions} for:item="item"
+            ><label class="renewal-row" key={item.key}
+              ><lightning-input
+                type="checkbox"
+                variant="label-hidden"
+                label={item.label}
+                checked={item.selected}
+                data-key={item.key}
+                data-group="additional"
+                onchange={changeRenewalChoice}
+              ></lightning-input
+              ><img src={item.logoUrl} alt="" /><span>{item.label}</span
+              ><em>Available</em></label
+            ></template
+          >
+        </div>
+        <footer class="slds-modal__footer">
+          <lightning-button
+            label="Cancel"
+            onclick={closeRenewal}
+          ></lightning-button
+          ><lightning-button
+            variant="brand"
+            label="Send Email"
+            onclick={submitRenewal}
+          ></lightning-button>
+        </footer>
+      </div>
+    </section>
+    <div class="slds-backdrop slds-backdrop_open"></div>
   </template>
 </template>

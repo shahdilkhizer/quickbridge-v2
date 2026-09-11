@@ -25,7 +25,10 @@ public without sharing class IntegrationErrorLogService {
     }
     Map<String, Failure> byReference = new Map<String, Failure>();
     for (Failure failure : failures) {
-      if (failure == null || (failure.recordId == null && String.isBlank(failure.externalId))) {
+      if (
+        failure == null ||
+        (failure.recordId == null && String.isBlank(failure.externalId))
+      ) {
         continue;
       }
       byReference.put(referenceFor(failure), failure);
@@ -36,10 +39,7 @@ public without sharing class IntegrationErrorLogService {
 
     Map<String, Error_Log__c> existingByReference = new Map<String, Error_Log__c>();
     for (Error_Log__c row : [
-      SELECT
-        Id,
-        External_Reference__c,
-        Retry_History_Notes__c
+      SELECT Id, External_Reference__c, Retry_History_Notes__c
       FROM Error_Log__c
       WHERE External_Reference__c IN :byReference.keySet()
     ]) {
@@ -96,14 +96,19 @@ public without sharing class IntegrationErrorLogService {
       if (row.Id == null || failure.recordId == null) {
         continue;
       }
-      String linkKey = String.valueOf(row.Id) + ':' + String.valueOf(failure.recordId);
+      String linkKey =
+        String.valueOf(row.Id) +
+        ':' +
+        String.valueOf(failure.recordId);
       if (existingLinkKeys.contains(linkKey)) {
         continue;
       }
       links.add(
         new Error_Log_Link__c(
           Error_Log__c = row.Id,
-          Linked_Object_API_Name__c = failure.recordId.getSObjectType().getDescribe().getName(),
+          Linked_Object_API_Name__c = failure.recordId.getSObjectType()
+            .getDescribe()
+            .getName(),
           Linked_Record_Id__c = String.valueOf(failure.recordId),
           Relationship_Role__c = 'Source'
         )
@@ -139,11 +144,29 @@ public without sharing class IntegrationErrorLogService {
   public static String sanitizeForUser(String message) {
     return sanitize(message);
   }
-  public static void markExternalResolved(String connectorKey,String operationKey,String externalId) {
-    String reference = 'inbound:' + connectorKey + ':' + operationKey + ':' + externalId;
-    List<Error_Log__c> rows = [SELECT Id FROM Error_Log__c WHERE External_Reference__c = :reference];
-    for (Error_Log__c row : rows) { row.Retry_Status__c='Success'; row.Is_Retryable__c=false; }
-    if (!rows.isEmpty()) update rows;
+  public static void markExternalResolved(
+    String connectorKey,
+    String operationKey,
+    String externalId
+  ) {
+    String reference =
+      'inbound:' +
+      connectorKey +
+      ':' +
+      operationKey +
+      ':' +
+      externalId;
+    List<Error_Log__c> rows = [
+      SELECT Id
+      FROM Error_Log__c
+      WHERE External_Reference__c = :reference
+    ];
+    for (Error_Log__c row : rows) {
+      row.Retry_Status__c = 'Success';
+      row.Is_Retryable__c = false;
+    }
+    if (!rows.isEmpty())
+      update rows;
   }
 
   private static void applyFailure(
@@ -152,15 +175,32 @@ public without sharing class IntegrationErrorLogService {
     String referenceValue
   ) {
     row.External_Reference__c = referenceValue.left(255);
-    row.Error_Category__c = bounded(failure.category, 255, 'Integration Failure');
+    row.Error_Category__c = bounded(
+      failure.category,
+      255,
+      'Integration Failure'
+    );
     row.Error_Message__c = sanitize(failure.message).left(MESSAGE_LIMIT);
+    row.Connector_Key__c = bounded(failure.connectorKey, 80, null);
+    row.Operation_Key__c = bounded(failure.operationKey, 120, null);
+    row.Error_Signature__c = signatureFor(
+      failure.connectorKey,
+      failure.operationKey,
+      failure.category,
+      row.Error_Message__c,
+      failure.httpStatusCode
+    );
     row.Http_Status_Code__c = failure.httpStatusCode;
     row.Is_Retryable__c = failure.retryable == true;
     row.Retry_Count__c = failure.retryCount == null ? 0 : failure.retryCount;
     row.Retry_Status__c = retryStatus(failure);
     row.Class_Method_Name__c = bounded(failure.classMethod, 255, null);
-    row.Source_Object__c = failure.recordId == null ? failure.sourceObject : failure.recordId.getSObjectType().getDescribe().getName();
-    row.Source_Record_Id__c = failure.recordId == null ? failure.externalId : String.valueOf(failure.recordId);
+    row.Source_Object__c = failure.recordId == null
+      ? failure.sourceObject
+      : failure.recordId.getSObjectType().getDescribe().getName();
+    row.Source_Record_Id__c = failure.recordId == null
+      ? failure.externalId
+      : String.valueOf(failure.recordId);
     row.Action_Source_Object__c = row.Source_Object__c;
     row.Action_Source_Record_Id__c = row.Source_Record_Id__c;
     row.Dml_Operation__c = bounded(failure.dmlOperation, 255, null);
@@ -171,7 +211,8 @@ public without sharing class IntegrationErrorLogService {
       row.Retry_Count__c,
       row.Error_Message__c
     );
-    if (failure.recordId != null) applyTypedLookup(row, failure.recordId);
+    if (failure.recordId != null)
+      applyTypedLookup(row, failure.recordId);
   }
 
   private static void applyTypedLookup(Error_Log__c row, Id recordId) {
@@ -193,8 +234,11 @@ public without sharing class IntegrationErrorLogService {
 
   private static String retryStatus(Failure failure) {
     Integer attempts = failure.retryCount == null ? 0 : failure.retryCount;
-    Integer maximum = failure.maximumAttempts == null ? 5 : failure.maximumAttempts;
-    return failure.retryable == true && attempts < maximum
+    Integer maximum = failure.maximumAttempts == null
+      ? 5
+      : failure.maximumAttempts;
+    return failure.retryable == true &&
+      attempts < maximum
       ? 'Retrying'
       : 'Failed';
   }
@@ -204,7 +248,8 @@ public without sharing class IntegrationErrorLogService {
     Decimal retryCount,
     String message
   ) {
-    String entry = String.valueOf(System.now()) +
+    String entry =
+      String.valueOf(System.now()) +
       ' attempt ' +
       String.valueOf(retryCount == null ? 0 : retryCount.intValue()) +
       ': ' +
@@ -216,7 +261,13 @@ public without sharing class IntegrationErrorLogService {
   }
 
   private static String referenceFor(Failure failure) {
-    if (failure.recordId == null) return 'inbound:' + failure.connectorKey + ':' + failure.operationKey + ':' + failure.externalId;
+    if (failure.recordId == null)
+      return 'inbound:' +
+        failure.connectorKey +
+        ':' +
+        failure.operationKey +
+        ':' +
+        failure.externalId;
     return referenceFor(failure.workItemId, failure.recordId);
   }
 
@@ -230,12 +281,51 @@ public without sharing class IntegrationErrorLogService {
     String safeMessage = String.isBlank(message)
       ? 'Integration processing failed.'
       : message;
-    safeMessage = safeMessage.replaceAll('(?i)bearer\\s+[a-z0-9._~+\\-/]+=*', 'Bearer [REDACTED]');
-    safeMessage = safeMessage.replaceAll('(?i)(token|secret|password|authorization)\\s*[:=]\\s*[^,;\\s]+', '$1=[REDACTED]');
+    safeMessage = safeMessage.replaceAll(
+      '(?i)bearer\\s+[a-z0-9._~+\\-/]+=*',
+      'Bearer [REDACTED]'
+    );
+    safeMessage = safeMessage.replaceAll(
+      '(?i)(token|secret|password|authorization)\\s*[:=]\\s*[^,;\\s]+',
+      '$1=[REDACTED]'
+    );
     return safeMessage;
   }
 
-  private static String bounded(String value, Integer limitValue, String fallback) {
+  public static String signatureFor(
+    String connectorKey,
+    String operationKey,
+    String category,
+    String message,
+    Integer httpStatusCode
+  ) {
+    String normalized = sanitize(message)
+      .toLowerCase()
+      .replaceAll('[a-zA-Z0-9]{15,18}', '[id]')
+      .replaceAll('https?://[^\\s]+', '[url]')
+      .replaceAll('\\b\\d+\\b', '[n]')
+      .replaceAll('\\s+', ' ')
+      .trim();
+    String seed =
+      String.valueOf(connectorKey).toLowerCase() +
+      '|' +
+      String.valueOf(operationKey).toLowerCase() +
+      '|' +
+      String.valueOf(category).toLowerCase() +
+      '|' +
+      String.valueOf(httpStatusCode) +
+      '|' +
+      normalized;
+    return EncodingUtil.convertToHex(
+      Crypto.generateDigest('SHA-256', Blob.valueOf(seed))
+    );
+  }
+
+  private static String bounded(
+    String value,
+    Integer limitValue,
+    String fallback
+  ) {
     String resolved = String.isBlank(value) ? fallback : value;
     return String.isBlank(resolved) ? null : resolved.left(limitValue);
   }

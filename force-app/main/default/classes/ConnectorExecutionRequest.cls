@@ -16,6 +16,7 @@ public inherited sharing class ConnectorExecutionRequest {
   public String payload { get; set; }
   public String correlationKey { get; set; }
   public Id scheduleId { get; set; }
+  public Id integrationRunId { get; set; }
   public Id workItemId { get; set; }
   public String leaseToken { get; set; }
   public Integer pageNumber { get; set; }
@@ -30,16 +31,18 @@ public inherited sharing class ConnectorExecutionRequest {
   }
 
   public ConnectorExecutionRequest validate() {
-    GenericIntegrationRuntime.OperationDefinition definition =
-      GenericIntegrationRuntime.resolve(this);
+    GenericIntegrationRuntime.OperationDefinition definition = GenericIntegrationRuntime.resolve(
+      this
+    );
     GenericIntegrationRuntime.validateRequestLimits(this);
     validateRecordIds(definition);
     return this;
   }
 
   public ConnectorExecutionRequest normalizedCopy() {
-    GenericIntegrationRuntime.OperationDefinition definition =
-      GenericIntegrationRuntime.resolve(this);
+    GenericIntegrationRuntime.OperationDefinition definition = GenericIntegrationRuntime.resolve(
+      this
+    );
     ConnectorExecutionRequest copyValue = copyOf(this);
     copyValue.connectorKey = definition.connectorKey;
     copyValue.operationKey = definition.operationKey;
@@ -57,8 +60,9 @@ public inherited sharing class ConnectorExecutionRequest {
   }
 
   public String operationIdentity() {
-    GenericIntegrationRuntime.OperationDefinition definition =
-      GenericIntegrationRuntime.resolve(this);
+    GenericIntegrationRuntime.OperationDefinition definition = GenericIntegrationRuntime.resolve(
+      this
+    );
     return definition.identity(direction);
   }
 
@@ -79,6 +83,7 @@ public inherited sharing class ConnectorExecutionRequest {
     copyValue.payload = source.payload;
     copyValue.correlationKey = source.correlationKey;
     copyValue.scheduleId = source.scheduleId;
+    copyValue.integrationRunId = source.integrationRunId;
     copyValue.workItemId = source.workItemId;
     copyValue.leaseToken = source.leaseToken;
     copyValue.pageNumber = source.pageNumber;
@@ -126,7 +131,8 @@ public inherited sharing class ConnectorExecutionRequest {
       return null;
     }
     String cleanConfigured = cleanObjectName(configuredObject);
-    Boolean expectsCustomObject = configuredObject.toLowerCase().endsWith('__c');
+    Boolean expectsCustomObject = configuredObject.toLowerCase()
+      .endsWith('__c');
     for (String candidate : globalDescribe.keySet()) {
       if (
         candidate.toLowerCase().endsWith('__c') == expectsCustomObject &&
@@ -150,5 +156,6 @@ public inherited sharing class ConnectorExecutionRequest {
     return cleanName.replaceAll('[^a-z0-9]', '');
   }
 
-  public class ConnectorExecutionRequestException extends Exception {}
+  public class ConnectorExecutionRequestException extends Exception {
+  }
 }

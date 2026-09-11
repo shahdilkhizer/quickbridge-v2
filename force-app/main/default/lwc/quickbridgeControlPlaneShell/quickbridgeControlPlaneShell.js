@@ -19,6 +19,9 @@ export default class QuickbridgeControlPlaneShell extends LightningElement {
   @api connectorNextRun;
   @api connectorScheduleState;
   @api showScheduler = false;
+  @api showMapping = false;
+  @api showSettings = false;
+  @api showErrors = false;
 
   sidebarCollapsed = false;
 
@@ -65,7 +68,7 @@ export default class QuickbridgeControlPlaneShell extends LightningElement {
     }
   }
 
-  navigate(event) { this.dispatchEvent(new CustomEvent('navigate', { detail: event.currentTarget.dataset.screen })); }
+  navigate(event) { this.dispatchEvent(new CustomEvent('navigate', { detail: { screen: event.currentTarget.dataset.screen }, bubbles: true, composed: true })); }
   back() { this.dispatchEvent(new CustomEvent('back')); }
   logout() { this.dispatchEvent(new CustomEvent('logout')); }
 }

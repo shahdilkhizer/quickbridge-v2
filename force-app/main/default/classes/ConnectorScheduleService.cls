@@ -29,7 +29,7 @@ public with sharing class ConnectorScheduleService {
     }
 
     List<Scheduled_Integration_Job__c> jobs = [
-      SELECT Id, Status__c, Lease_Token__c
+      SELECT Id, Status__c, Lease_Token__c, Pending_Run_Key__c
       FROM Scheduled_Integration_Job__c
       WHERE Id = :scheduleId
       LIMIT 1
@@ -48,6 +48,7 @@ public with sharing class ConnectorScheduleService {
     }
 
     job.Status__c = 'Running';
+    job.Pending_Run_Key__c = null;
     Datetime nowValue = Datetime.now();
     job.Lease_Expires_At__c = deferredSeconds == null
       ? IntegrationScheduleDispatcher.leaseExpiresAt(nowValue)
@@ -74,18 +75,38 @@ public with sharing class ConnectorScheduleService {
       );
       return;
     }
+    IntegrationRunService.completeForSchedule(scheduleId, result);
     if (result.hasFailures()) {
-      completeFailure(scheduleId, leaseToken, result.errorSummary);
+      IntegrationScheduleDispatcher.completeRun(
+        scheduleId,
+        leaseToken,
+        false,
+        String.isBlank(result.errorSummary)
+          ? 'Connector execution failed.'
+          : result.errorSummary.left(32768)
+      );
       return;
     }
-    completeSuccess(scheduleId, leaseToken);
+    IntegrationScheduleDispatcher.completeRun(
+      scheduleId,
+      leaseToken,
+      true,
+      null
+    );
   }
 
   public static void completeSuccess(Id scheduleId, String leaseToken) {
     if (scheduleId == null || String.isBlank(leaseToken)) {
       return;
     }
-    IntegrationScheduleDispatcher.completeRun(scheduleId, leaseToken, true, null);
+    ConnectorExecutionResult result = ConnectorExecutionResult.success();
+    IntegrationRunService.completeForSchedule(scheduleId, result);
+    IntegrationScheduleDispatcher.completeRun(
+      scheduleId,
+      leaseToken,
+      true,
+      null
+    );
   }
 
   public static void completeFailure(
@@ -96,6 +117,12 @@ public with sharing class ConnectorScheduleService {
     if (scheduleId == null || String.isBlank(leaseToken)) {
       return;
     }
+    ConnectorExecutionResult result = ConnectorExecutionResult.failed(
+      errorMessage,
+      false,
+      null
+    );
+    IntegrationRunService.completeForSchedule(scheduleId, result);
     IntegrationScheduleDispatcher.completeRun(
       scheduleId,
       leaseToken,

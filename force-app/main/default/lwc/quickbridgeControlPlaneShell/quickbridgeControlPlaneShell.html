@@ -8,9 +8,9 @@
       <nav id="quickbridge-navigation">
         <button class={integrationsClass} data-screen="integrations" onclick={navigate} aria-label="Integrations" title="Integrations"><lightning-icon icon-name="utility:apps" size="x-small"></lightning-icon><span>Integrations</span></button>
         <button class={reportingClass} data-screen="reporting" onclick={navigate} aria-label="Reporting" title="Reporting"><lightning-icon icon-name="utility:chart" size="x-small"></lightning-icon><span>Reporting</span></button>
-        <button class={errorsClass} data-screen="errors" onclick={navigate} aria-label="Error Log" title="Error Log"><lightning-icon icon-name="utility:error" size="x-small"></lightning-icon><span>Error Log</span></button>
-        <button class={mappingClass} data-screen="mapping" onclick={navigate} aria-label="Field Mapping" title="Field Mapping"><lightning-icon icon-name="utility:merge_field" size="x-small"></lightning-icon><span>Field Mapping</span></button>
-        <button class={settingsClass} data-screen="settings" onclick={navigate} aria-label="Settings" title="Settings"><lightning-icon icon-name="utility:settings" size="x-small"></lightning-icon><span>Settings</span></button>
+        <template lwc:if={showErrors}><button class={errorsClass} data-screen="errors" onclick={navigate} aria-label="Error Log" title="Error Log"><lightning-icon icon-name="utility:error" size="x-small"></lightning-icon><span>Error Log</span></button></template>
+        <template lwc:if={showMapping}><button class={mappingClass} data-screen="mapping" onclick={navigate} aria-label="Field Mapping" title="Field Mapping"><lightning-icon icon-name="utility:merge_field" size="x-small"></lightning-icon><span>Field Mapping</span></button></template>
+        <template lwc:if={showSettings}><button class={settingsClass} data-screen="settings" onclick={navigate} aria-label="Settings" title="Settings"><lightning-icon icon-name="utility:settings" size="x-small"></lightning-icon><span>Settings</span></button></template>
         <template lwc:if={showScheduler}><button class={schedulerClass} data-screen="scheduler" onclick={navigate} aria-label="Scheduler" title="Scheduler"><lightning-icon icon-name="utility:date_time" size="x-small"></lightning-icon><span>Scheduler</span></button></template>
       </nav>
       <div class="sidebar-bottom">
